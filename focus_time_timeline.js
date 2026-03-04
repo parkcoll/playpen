@@ -51,66 +51,102 @@
    * @param {number} opts.workEnd         – work day end   in minutes from midnight (e.g. 1080 = 6 pm)
    * @returns {{ type: string, start: number, duration: number }[]}
    */
-  function generateSchedule({ meetingMinutes, numMeetings, numChat, numEmails, workStart, workEnd }) {
+  function generateSchedule({ meetingMinutes, numMeetings, numChat, numEmails, focusHoursDaily, workStart, workEnd }) {
     const rng = makeRNG(
       Math.round(meetingMinutes) * 10_007 +
-      numMeetings               *  997 +
-      numChat                   *  101 +
-      numEmails                 *   37
+      numMeetings               *    997 +
+      numChat                   *    101 +
+      numEmails                 *     37
     );
 
-    const workDur = workEnd - workStart;
-    const buf     = 30; // 30-min buffer at each end of the day
-    const aStart  = workStart + buf;
-    const aEnd    = workEnd   - buf;
-    const aLen    = aEnd - aStart;
+    const buf    = 30;
+    const aStart = workStart + buf;
+    const aEnd   = workEnd   - buf;
+    const aLen   = aEnd - aStart;
 
-    // ── Meetings ──────────────────────────────────────────────────────────────
-    // Clamp average meeting duration to [15, 90] min.
-    const avgDur = Math.max(15, Math.min(90, meetingMinutes / Math.max(1, numMeetings)));
+    // ── Focus block ───────────────────────────────────────────────────────────
+    // If actual focus time >= 2 h, reserve a block for it first so that
+    // meetings and chat are packed around it rather than fragmenting the day.
+    const focusMin = focusHoursDaily ? Math.round(focusHoursDaily * 60) : 0;
+    const hasFocus = focusMin >= 120;
+    const focusBuf = 15; // min gap between focus block and surrounding meetings
 
-    // Distribute meetings at sorted random positions across the available window.
-    const positions = Array.from({ length: numMeetings }, rng).sort((a, b) => a - b);
-
-    const meetings = positions.map(pos => ({
-      type:     'meeting',
-      start:    Math.round(aStart + pos * (aLen - avgDur)),
-      duration: Math.max(15, Math.min(120, Math.round(avgDur * (0.75 + rng() * 0.5)))),
-    }));
-
-    // Resolve overlaps: push later meetings forward, enforcing a 15-min gap.
-    meetings.sort((a, b) => a.start - b.start);
-    for (let i = 1; i < meetings.length; i++) {
-      const prev = meetings[i - 1];
-      meetings[i].start = Math.max(meetings[i].start, prev.start + prev.duration + 15);
+    let focusStart = null, focusEnd = null;
+    if (hasFocus) {
+      // Position the focus block somewhere in the middle of the day
+      // (between 15% and 65% through the available span).
+      const span = Math.max(0, aLen - focusMin);
+      focusStart = Math.round(aStart + (0.15 + rng() * 0.50) * span);
+      focusEnd   = focusStart + focusMin;
     }
 
-    // Drop any meeting that overflows the end-of-day buffer.
+    // ── Build placement windows (regions outside the focus block) ─────────────
+    const windows = hasFocus
+      ? [
+          { start: aStart,              end: focusStart - focusBuf },
+          { start: focusEnd + focusBuf, end: aEnd                  },
+        ].filter(w => w.end - w.start >= 20)
+      : [{ start: aStart, end: aEnd }];
+
+    const totalWinLen = windows.reduce((s, w) => s + Math.max(0, w.end - w.start), 0);
+
+    // ── Meetings ──────────────────────────────────────────────────────────────
+    const avgDur     = Math.max(15, Math.min(90, meetingMinutes / Math.max(1, numMeetings)));
+    const sortedPos  = Array.from({ length: numMeetings }, rng).sort((a, b) => a - b);
+
+    const meetings = sortedPos.map(pos => {
+      // Map pos [0,1] to a point inside one of the placement windows.
+      let t = pos * totalWinLen, cumLen = 0;
+      for (const w of windows) {
+        const wLen = Math.max(0, w.end - w.start);
+        if (t <= cumLen + wLen) {
+          const localT = wLen > 0 ? (t - cumLen) / wLen : 0;
+          const start  = Math.round(w.start + localT * Math.max(0, wLen - avgDur));
+          return {
+            type:     'meeting',
+            start:    Math.max(w.start, Math.min(w.end - 15, start)),
+            duration: Math.max(15, Math.min(120, Math.round(avgDur * (0.75 + rng() * 0.5)))),
+          };
+        }
+        cumLen += wLen;
+      }
+      // Fallback: first window start
+      return { type: 'meeting', start: windows[0]?.start ?? aStart, duration: Math.round(avgDur) };
+    });
+
+    // Resolve meeting overlaps with a 15-min gap.
+    meetings.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < meetings.length; i++) {
+      const p = meetings[i - 1];
+      meetings[i].start = Math.max(meetings[i].start, p.start + p.duration + 15);
+    }
     const validMeetings = meetings.filter(m => m.start + m.duration <= aEnd);
 
     // ── Email & chat interruptions ─────────────────────────────────────────────
-    // Cluster emails/chats into "checking sessions" rather than individual messages.
-    const emailClusters = Math.max(1, Math.round(numEmails / 5));
-    const chatClusters  = Math.max(1, Math.round(numChat   / 8));
-
-    // Build occupied intervals (with buffer) to avoid placing short events inside meetings.
-    const occupied = validMeetings.map(m => ({ s: m.start - 15, e: m.start + m.duration + 15 }));
+    const occupied = [
+      ...validMeetings.map(m => ({ s: m.start - 15, e: m.start + m.duration + 15 })),
+      // Block the focus window so chat/email don't land inside it.
+      ...(hasFocus ? [{ s: focusStart - focusBuf, e: focusEnd + focusBuf }] : []),
+    ];
 
     const tryPlace = (type, duration) => {
       for (let attempt = 0; attempt < 40; attempt++) {
         const t = Math.round(aStart + rng() * (aLen - duration));
+        if (hasFocus && t + duration > focusStart - focusBuf && t < focusEnd + focusBuf) continue;
         if (!occupied.some(o => t < o.e && t + duration > o.s)) {
           occupied.push({ s: t - 10, e: t + duration + 10 });
           return { type, start: t, duration };
         }
       }
-      return null; // couldn't place without conflict
+      return null;
     };
+
+    const emailClusters = Math.max(1, Math.round(numEmails / 5));
+    const chatClusters  = Math.max(1, Math.round(numChat   / 8));
 
     const emailEvents = Array.from({ length: emailClusters }, () => tryPlace('email', 5)).filter(Boolean);
     const chatEvents  = Array.from({ length: chatClusters  }, () => tryPlace('chat',  3)).filter(Boolean);
 
-    // ── Combine & sort ────────────────────────────────────────────────────────
     return [...validMeetings, ...emailEvents, ...chatEvents].sort((a, b) => a.start - b.start);
   }
 
@@ -170,16 +206,26 @@
     let result = [...events];
     for (let i = 0; i < 40; i++) {
       const simFocus = sumFocus(result);
-      if (simFocus <= targetFocusMin + 15) break; // within 15-min tolerance
+      if (simFocus <= targetFocusMin + 15) break;
 
       const blocks = getFocusBlocks(result, workStart, workEnd, focusThr);
       if (!blocks.length) break;
 
-      // Split the largest focus block at its midpoint
       blocks.sort((a, b) => (b.end - b.start) - (a.end - a.start));
-      const mid = Math.round((blocks[0].start + blocks[0].end) / 2);
-      result = [...result, { type: 'gap', start: mid - 5, duration: 10 }]
-                 .sort((a, b) => a.start - b.start);
+      const blk     = blocks[0];
+      const excess  = simFocus - targetFocusMin;
+      // Trim from the start of the block by exactly `excess` minutes so the
+      // remaining tail is the right size.  If the block is barely above the
+      // threshold, split at the midpoint (both halves will fall below it).
+      const trimDur = Math.min(excess, blk.end - blk.start - focusThr);
+      if (trimDur >= 5) {
+        result = [...result, { type: 'gap', start: blk.start, duration: Math.round(trimDur) }]
+                   .sort((a, b) => a.start - b.start);
+      } else {
+        const mid = Math.round((blk.start + blk.end) / 2);
+        result = [...result, { type: 'gap', start: mid - 5, duration: 10 }]
+                   .sort((a, b) => a.start - b.start);
+      }
     }
     return result;
   }
@@ -345,12 +391,16 @@
       };
 
       let events = generateSchedule(inputs);
-      // If actual focus hours are provided, calibrate the simulation to match.
+      // If actual focus data is provided and it's below the 2-hour threshold,
+      // calibrate down by adding phantom interruptions to eliminate any
+      // accidental focus blocks the random placement may have created.
       if (inputs.focusHoursDaily !== null) {
-        events = calibrateToFocusTarget(
-          events, inputs.workStart, inputs.workEnd,
-          renderOpts.focusThr, inputs.focusHoursDaily * 60
-        );
+        const targetMin = inputs.focusHoursDaily * 60;
+        if (targetMin < renderOpts.focusThr) {
+          events = calibrateToFocusTarget(
+            events, inputs.workStart, inputs.workEnd, renderOpts.focusThr, targetMin
+          );
+        }
       }
       this._draw(element, events, { ...inputs, ...renderOpts });
       done();
