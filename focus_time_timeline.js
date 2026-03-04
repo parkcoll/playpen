@@ -296,16 +296,16 @@
       const row = (data && data[0]) || {};
       const gv  = i => fields[i] ? (parseFloat(row[fields[i].name]?.value) || 0) : 0;
 
-      // Worklytics field order:
+      // Worklytics field order (all values are weekly totals → divide by 5 for daily):
       //   [0] calendar:events:attended       → number of meetings
       //   [1] calendar:events:hours:meetings → meeting duration in HOURS (convert to minutes)
       //   [2] gmail:emails:sent              → number of emails
       //   [3] slack:message:sent             → number of chat messages
       const inputs = {
-        numMeetings:    Math.max(1, Math.round(gv(0) || 4)),
-        meetingMinutes: (gv(1) || 2) * 60,   // hours → minutes
-        numEmails:      gv(2) || 10,
-        numChat:        gv(3) || 20,
+        numMeetings:    Math.max(1, Math.round((gv(0) / 5) || 4)),
+        meetingMinutes: ((gv(1) / 5) || 2) * 60,   // weekly hours → daily hours → minutes
+        numEmails:      (gv(2) / 5) || 10,
+        numChat:        (gv(3) / 5) || 20,
         workStart:      Math.round((config.work_start_hour      || 8)  * 60),
         workEnd:        Math.round((config.work_end_hour        || 18) * 60),
       };
