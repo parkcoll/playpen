@@ -1,0 +1,446 @@
+/**
+ * Focus Time Timeline – Looker Custom Visualization
+ *
+ * Simulates a representative workday based on aggregate meeting/communication
+ * metrics and renders it as an annotated timeline showing focus time vs. interruptions.
+ *
+ * Field order (drag measures onto the visualization in this order):
+ *   1. Meeting minutes per day   — e.g. SUM(meeting_minutes)
+ *   2. Number of meetings        — e.g. COUNT(meeting_id)
+ *   3. Chat / Slack messages     — e.g. SUM(chat_messages_sent)
+ *   4. Emails sent               — e.g. SUM(emails_sent)
+ *
+ * The chart uses a seeded pseudo-random generator so the same input values
+ * always produce the same representative schedule.
+ */
+(function () {
+  'use strict';
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 1. Utilities
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /** Xorshift32 seeded RNG – returns floats in [0, 1). */
+  function makeRNG(seed) {
+    let s = (Math.abs(Math.round(seed)) >>> 0) || 1_234_567;
+    return () => {
+      s ^= s << 13;
+      s ^= s >> 17;
+      s ^= s << 5;
+      return (s >>> 0) / 0x1_0000_0000;
+    };
+  }
+
+  /** Format a number to one decimal place (for SVG coordinates). */
+  const f = v => Number(v).toFixed(1);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 2. Schedule generation
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Generates a list of events (meetings, email sessions, chat sessions)
+   * spread across the workday using a deterministic seeded RNG.
+   *
+   * @param {object} opts
+   * @param {number} opts.meetingMinutes  – total meeting time in minutes
+   * @param {number} opts.numMeetings     – number of distinct meetings
+   * @param {number} opts.numChat         – number of chat/Slack messages
+   * @param {number} opts.numEmails       – number of emails sent
+   * @param {number} opts.workStart       – work day start in minutes from midnight (e.g. 480 = 8 am)
+   * @param {number} opts.workEnd         – work day end   in minutes from midnight (e.g. 1080 = 6 pm)
+   * @returns {{ type: string, start: number, duration: number }[]}
+   */
+  function generateSchedule({ meetingMinutes, numMeetings, numChat, numEmails, workStart, workEnd }) {
+    const rng = makeRNG(
+      Math.round(meetingMinutes) * 10_007 +
+      numMeetings               *  997 +
+      numChat                   *  101 +
+      numEmails                 *   37
+    );
+
+    const workDur = workEnd - workStart;
+    const buf     = 30; // 30-min buffer at each end of the day
+    const aStart  = workStart + buf;
+    const aEnd    = workEnd   - buf;
+    const aLen    = aEnd - aStart;
+
+    // ── Meetings ──────────────────────────────────────────────────────────────
+    // Clamp average meeting duration to [15, 90] min.
+    const avgDur = Math.max(15, Math.min(90, meetingMinutes / Math.max(1, numMeetings)));
+
+    // Distribute meetings at sorted random positions across the available window.
+    const positions = Array.from({ length: numMeetings }, rng).sort((a, b) => a - b);
+
+    const meetings = positions.map(pos => ({
+      type:     'meeting',
+      start:    Math.round(aStart + pos * (aLen - avgDur)),
+      duration: Math.max(15, Math.min(120, Math.round(avgDur * (0.75 + rng() * 0.5)))),
+    }));
+
+    // Resolve overlaps: push later meetings forward, enforcing a 15-min gap.
+    meetings.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < meetings.length; i++) {
+      const prev = meetings[i - 1];
+      meetings[i].start = Math.max(meetings[i].start, prev.start + prev.duration + 15);
+    }
+
+    // Drop any meeting that overflows the end-of-day buffer.
+    const validMeetings = meetings.filter(m => m.start + m.duration <= aEnd);
+
+    // ── Email & chat interruptions ─────────────────────────────────────────────
+    // Cluster emails/chats into "checking sessions" rather than individual messages.
+    const emailClusters = Math.max(1, Math.round(numEmails / 5));
+    const chatClusters  = Math.max(1, Math.round(numChat   / 8));
+
+    // Build occupied intervals (with buffer) to avoid placing short events inside meetings.
+    const occupied = validMeetings.map(m => ({ s: m.start - 15, e: m.start + m.duration + 15 }));
+
+    const tryPlace = (type, duration) => {
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const t = Math.round(aStart + rng() * (aLen - duration));
+        if (!occupied.some(o => t < o.e && t + duration > o.s)) {
+          occupied.push({ s: t - 10, e: t + duration + 10 });
+          return { type, start: t, duration };
+        }
+      }
+      return null; // couldn't place without conflict
+    };
+
+    const emailEvents = Array.from({ length: emailClusters }, () => tryPlace('email', 5)).filter(Boolean);
+    const chatEvents  = Array.from({ length: chatClusters  }, () => tryPlace('chat',  3)).filter(Boolean);
+
+    // ── Combine & sort ────────────────────────────────────────────────────────
+    return [...validMeetings, ...emailEvents, ...chatEvents].sort((a, b) => a.start - b.start);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 3. Timeline helpers
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Converts an event list into an ordered array of coloured bar segments.
+   * Gaps >= focusThr minutes are classified as 'focus'; shorter gaps as 'gap'.
+   */
+  function buildTimeline(events, workStart, workEnd, focusThr) {
+    const segs = [];
+    let t = workStart;
+    for (const ev of events) {
+      if (ev.start > t) {
+        segs.push({ start: t, end: ev.start, type: (ev.start - t) >= focusThr ? 'focus' : 'gap' });
+      }
+      segs.push({ start: ev.start, end: ev.start + ev.duration, type: ev.type });
+      t = ev.start + ev.duration;
+    }
+    if (t < workEnd) {
+      segs.push({ start: t, end: workEnd, type: (workEnd - t) >= focusThr ? 'focus' : 'gap' });
+    }
+    return segs;
+  }
+
+  /**
+   * Returns the list of contiguous gaps that qualify as focus time (>= focusThr min).
+   * These are the gaps where the "plateau" shape will be drawn above the bar.
+   */
+  function getFocusBlocks(events, workStart, workEnd, focusThr) {
+    const blocks = [];
+    let t = workStart;
+    for (const ev of events) {
+      if (ev.start - t >= focusThr) blocks.push({ start: t, end: ev.start });
+      t = ev.start + ev.duration;
+    }
+    if (workEnd - t >= focusThr) blocks.push({ start: t, end: workEnd });
+    return blocks;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 4. SVG shape builders
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Smooth trapezoidal plateau path for focus blocks.
+   * The shape rises from y0 to y1 over rampPx pixels at each end.
+   *
+   * @param {number} x0     – left edge of the block
+   * @param {number} x3     – right edge of the block
+   * @param {number} y0     – baseline y (top of bar)
+   * @param {number} y1     – plateau height y (< y0 since SVG y increases downward)
+   * @param {number} rampPx – width of the ramp slopes in pixels
+   */
+  function plateauPath(x0, x3, y0, y1, rampPx) {
+    const x1 = x0 + rampPx;
+    const x2 = x3 - rampPx;
+    const cx = rampPx * 0.55; // bezier handle offset for smooth S-curve
+    if (x2 <= x1) {
+      // Block is too narrow for a plateau – draw an arch instead.
+      const mx = (x0 + x3) / 2;
+      return (
+        `M${f(x0)},${f(y0)} ` +
+        `C${f(x0 + cx)},${f(y0)} ${f(mx)},${f(y1)} ${f(mx)},${f(y1)} ` +
+        `C${f(mx)},${f(y1)} ${f(x3 - cx)},${f(y0)} ${f(x3)},${f(y0)} Z`
+      );
+    }
+    return (
+      `M${f(x0)},${f(y0)} ` +
+      `C${f(x0 + cx)},${f(y0)} ${f(x1 - cx)},${f(y1)} ${f(x1)},${f(y1)} ` +
+      `L${f(x2)},${f(y1)} ` +
+      `C${f(x2 + cx)},${f(y1)} ${f(x3 - cx)},${f(y0)} ${f(x3)},${f(y0)} Z`
+    );
+  }
+
+  /**
+   * Smooth mountain / hump path for interruption events.
+   *
+   * The hump spans from x0 (start of ramp-down) through the event body
+   * (x1 → x2) to x3 (end of ramp-up), peaking at y1.
+   *
+   * @param {number} x0 – start of pre-event ramp (event.start − rampPx)
+   * @param {number} x1 – event start
+   * @param {number} x2 – event end
+   * @param {number} x3 – end of post-event ramp (event.end + rampPx)
+   * @param {number} y0 – baseline y
+   * @param {number} y1 – peak y
+   */
+  function humpPath(x0, x1, x2, x3, y0, y1) {
+    const cx1 = (x1 - x0) * 0.55;
+    const cx2 = (x3 - x2) * 0.55;
+    if (x2 - x1 < 2) {
+      // Very short event – single arch.
+      const mx = (x0 + x3) / 2;
+      return (
+        `M${f(x0)},${f(y0)} ` +
+        `C${f(x0 + cx1)},${f(y0)} ${f(mx)},${f(y1)} ${f(mx)},${f(y1)} ` +
+        `C${f(mx)},${f(y1)} ${f(x3 - cx2)},${f(y0)} ${f(x3)},${f(y0)} Z`
+      );
+    }
+    return (
+      `M${f(x0)},${f(y0)} ` +
+      `C${f(x0 + cx1)},${f(y0)} ${f(x1 - cx1)},${f(y1)} ${f(x1)},${f(y1)} ` +
+      `L${f(x2)},${f(y1)} ` +
+      `C${f(x2 + cx2)},${f(y1)} ${f(x3 - cx2)},${f(y0)} ${f(x3)},${f(y0)} Z`
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 5. Looker visualization
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  looker.plugins.visualizations.add({
+    id:    'focus_time_timeline_v1',
+    label: 'Focus Time Timeline',
+
+    options: {
+      work_start_hour: {
+        type: 'number', label: 'Work Start (24-h hour)', default: 8,
+        section: 'Schedule', order: 1,
+      },
+      work_end_hour: {
+        type: 'number', label: 'Work End (24-h hour)', default: 18,
+        section: 'Schedule', order: 2,
+      },
+      focus_threshold_hours: {
+        type: 'number', label: 'Min Focus Block (hours)', default: 2,
+        section: 'Schedule', order: 3,
+      },
+      ramp_minutes: {
+        type: 'number', label: 'Focus Ramp Time (minutes)', default: 12,
+        section: 'Schedule', order: 4,
+      },
+      chart_title: {
+        type: 'string', label: 'Chart Title',
+        default: 'But in reality, interruptions occur',
+        section: 'Display', order: 1,
+      },
+    },
+
+    // ── create ───────────────────────────────────────────────────────────────
+    create(element, config) {
+      element.style.background = '#ffffff';
+      element.innerHTML = `
+<style>
+  .ftl{display:flex;flex-direction:column;width:100%;height:100%;
+       padding:20px 28px 10px;box-sizing:border-box;
+       font-family:"Google Sans",Roboto,Arial,sans-serif}
+  .ftl-title{font-size:22px;font-weight:400;color:#3c4043;margin-bottom:10px}
+  .ftl-chart{flex:1;min-height:0;position:relative}
+  .ftl-legend{display:flex;gap:24px;justify-content:center;
+              margin-top:10px;font-size:13px;color:#5f6368}
+  .ftl-li{display:flex;align-items:center;gap:6px}
+  .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
+</style>
+<div class="ftl">
+  <div class="ftl-title">But in reality, interruptions occur</div>
+  <div class="ftl-chart">
+    <svg id="ftl-svg" style="display:block;overflow:visible"></svg>
+  </div>
+  <div class="ftl-legend">
+    <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div>Focus Time</div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:#34A853"></div>Email</div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:#FBBC04"></div>Chat</div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:#EA4335"></div>Meetings</div>
+  </div>
+</div>`;
+    },
+
+    // ── updateAsync ──────────────────────────────────────────────────────────
+    updateAsync(data, element, config, queryResponse, details, done) {
+      // Update title
+      const titleEl = element.querySelector('.ftl-title');
+      if (titleEl) titleEl.textContent = config.chart_title || 'But in reality, interruptions occur';
+
+      // Read positional fields (measures in drag-order)
+      const fields = [
+        ...(queryResponse.fields.dimension_like || []),
+        ...(queryResponse.fields.measure_like   || []),
+      ];
+      const row = (data && data[0]) || {};
+      const gv  = i => fields[i] ? (parseFloat(row[fields[i].name]?.value) || 0) : 0;
+
+      // Worklytics field order:
+      //   [0] calendar:events:attended       → number of meetings
+      //   [1] calendar:events:hours:meetings → meeting duration in HOURS (convert to minutes)
+      //   [2] gmail:emails:sent              → number of emails
+      //   [3] slack:message:sent             → number of chat messages
+      const inputs = {
+        numMeetings:    Math.max(1, Math.round(gv(0) || 4)),
+        meetingMinutes: (gv(1) || 2) * 60,   // hours → minutes
+        numEmails:      gv(2) || 10,
+        numChat:        gv(3) || 20,
+        workStart:      Math.round((config.work_start_hour      || 8)  * 60),
+        workEnd:        Math.round((config.work_end_hour        || 18) * 60),
+      };
+      const renderOpts = {
+        rampMin:  config.ramp_minutes              || 12,
+        focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
+      };
+
+      const events = generateSchedule(inputs);
+      this._draw(element, events, { ...inputs, ...renderOpts });
+      done();
+    },
+
+    // ── _draw (SVG renderer) ─────────────────────────────────────────────────
+    _draw(element, events, { workStart, workEnd, rampMin, focusThr }) {
+      const svg      = element.querySelector('#ftl-svg');
+      if (!svg) return;
+
+      // Use the root element's dimensions directly — flex child clientHeight
+      // is unreliable in Looker's sandboxed iframe context.
+      const W = Math.max(300, element.clientWidth  || 700);
+      const H = Math.max(120, (element.clientHeight || 280) - 80); // subtract title + legend + padding
+
+      svg.setAttribute('width',  W);
+      svg.setAttribute('height', H + 32);
+
+      // Chart margins
+      const ML   = 12;  // left  (no y-axis labels needed)
+      const MR   = 12;  // right
+      const cW   = W - ML - MR;
+      const wDur = workEnd - workStart;
+
+      // ── Layout constants ───────────────────────────────────────────────────
+      // The bar sits at ~62% of the chart height from the top; the area
+      // above it is used for the focus plateaus and interruption humps.
+      const barY   = Math.round(H * 0.62);
+      const barH   = Math.max(20, Math.round(H * 0.15));
+      const maxFH  = Math.round(barY * 0.80); // max height of focus plateau
+      const maxIH  = Math.round(barY * 0.62); // max height of interruption hump
+
+      // ── Coordinate helpers ─────────────────────────────────────────────────
+      const tx     = t   => ML + ((t - workStart) / wDur) * cW; // time → x pixel
+      const rampPx = (rampMin / wDur) * cW;                      // ramp time → px width
+
+      // ── Colors ────────────────────────────────────────────────────────────
+      const COLOR = {
+        focus:   '#4285F4',
+        gap:     '#EA4335', // insufficient focus (< 2 h) – same red as meetings
+        meeting: '#EA4335',
+        email:   '#34A853',
+        chat:    '#FBBC04',
+        bg:      '#E8EAED',
+      };
+
+      // ── Build SVG ─────────────────────────────────────────────────────────
+      const p      = [];
+      const clipId = 'ftl-bar-clip';
+      const rx     = Math.round(barH * 0.45); // border-radius for bar ends
+
+      // Clip path so coloured segments inherit the bar's rounded corners.
+      p.push(
+        `<defs>` +
+        `<clipPath id="${clipId}">` +
+        `<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" rx="${rx}"/>` +
+        `</clipPath>` +
+        `</defs>`
+      );
+
+      // Gray background bar
+      p.push(`<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" fill="${COLOR.bg}" rx="${rx}"/>`);
+
+      // Coloured timeline segments (clipped to rounded bar)
+      p.push(`<g clip-path="url(#${clipId})">`);
+      buildTimeline(events, workStart, workEnd, focusThr).forEach(seg => {
+        const x = tx(seg.start);
+        const w = Math.max(1.5, tx(seg.end) - x);
+        p.push(`<rect x="${f(x)}" y="${barY}" width="${f(w)}" height="${barH}" fill="${COLOR[seg.type] || COLOR.bg}"/>`);
+      });
+      p.push('</g>');
+
+      // Subtle bar border
+      p.push(`<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1" rx="${rx}"/>`);
+
+      // ── Focus plateau shapes (blue, above bar) ────────────────────────────
+      getFocusBlocks(events, workStart, workEnd, focusThr).forEach(block => {
+        const dur = block.end - block.start;
+        // Plateau height scales with block duration, capped at maxFH.
+        const fH  = Math.min(maxFH, maxFH * (0.40 + 0.60 * Math.min(1, dur / 240)));
+        const x0  = tx(block.start);
+        const x3  = tx(block.end);
+        // Ramp width: smaller of rampPx and 25% of block width.
+        const rp  = Math.min(rampPx, (x3 - x0) * 0.25);
+        const d   = plateauPath(x0, x3, barY, barY - fH, rp);
+        p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"/>`);
+      });
+
+      // ── Interruption humps (salmon/pink, above bar) ───────────────────────
+      events.forEach(ev => {
+        const nd  = ev.duration / 60; // duration in hours
+        let iH;
+        if (ev.type === 'meeting') {
+          iH = maxIH * Math.min(1, 0.28 + 0.72 * Math.sqrt(nd));
+        } else if (ev.type === 'email') {
+          iH = maxIH * 0.32;
+        } else {
+          iH = maxIH * 0.24; // chat
+        }
+        iH = Math.max(maxIH * 0.12, iH);
+
+        const x1 = tx(ev.start);
+        const x2 = tx(ev.start + ev.duration);
+        const d  = humpPath(x1 - rampPx, x1, x2, x2 + rampPx, barY, barY - iH);
+        p.push(`<path d="${d}" fill="rgba(234,67,53,0.20)" stroke="none"/>`);
+      });
+
+      // ── Hour-marker axis ──────────────────────────────────────────────────
+      const h0 = Math.ceil(workStart  / 60);
+      const hN = Math.floor(workEnd   / 60);
+      for (let h = h0; h <= hN; h++) {
+        const x   = tx(h * 60);
+        const lbl = h === 12 ? '12 pm' : h < 12 ? `${h} am` : `${h - 12} pm`;
+        // Dashed vertical tick into the bar
+        p.push(
+          `<line x1="${f(x)}" y1="${barY}" x2="${f(x)}" y2="${barY + barH + 6}" ` +
+          `stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3,3"/>`
+        );
+        // Hour label below bar
+        p.push(
+          `<text x="${f(x)}" y="${barY + barH + 20}" ` +
+          `text-anchor="middle" font-size="12" fill="#5F6368" ` +
+          `font-family="Arial,sans-serif">${lbl}</text>`
+        );
+      }
+
+      svg.innerHTML = p.join('\n');
+    },
+  });
+})();
