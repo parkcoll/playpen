@@ -398,7 +398,7 @@
        padding:10px 8px 8px;box-sizing:border-box;overflow:hidden;
        font-family:"Google Sans",Roboto,Arial,sans-serif;justify-content:center}
   .ftl-chart{flex-shrink:0;position:relative;overflow:hidden}
-  .ftl-stats{text-align:center;flex-shrink:0;margin-top:0;
+  .ftl-stats{text-align:center;flex-shrink:0;margin-top:4px;
              font-size:13px;color:#5f6368;line-height:1.4}
   .ftl-stats b{font-weight:600;color:#3c4043}
   .ftl-legend{display:flex;gap:24px;justify-content:center;flex-shrink:0;
@@ -573,8 +573,8 @@
       const barH   = Math.max(20, Math.round(H * 0.15));
       const maxFH  = Math.round(barY * 0.80); // max height of focus plateau
 
-      // Set SVG height to exactly content height so there's no dead space below labels.
-      const svgH = barY + barH + 24; // 24px for hour label text below bar
+      // Set SVG height to content height + a small bottom gap before stats.
+      const svgH = barY + barH + 32; // 24px label + 8px gap
       svg.setAttribute('height', svgH);
 
       // ── Coordinate helpers ─────────────────────────────────────────────────
