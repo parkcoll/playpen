@@ -381,26 +381,28 @@
       if (titleEl) titleEl.textContent = config.chart_title || 'But in reality, interruptions occur';
 
       // Use only measure_like to avoid dimension field index offset.
-      // Worklytics field order (drag measures in this order):
-      //   [0] calendar:events:attended                  → meetings/week  ÷5 → daily
-      //   [1] calendar:events:hours:meetings            → meeting hours/week ÷5 → daily → ×60 → minutes
-      //   [2] gmail:emails:sent                         → emails/week    ÷5 → daily
-      //   [3] slack:message:sent                        → messages/week  ÷5 → daily
-      //   [4] worklytics:hours:in:focus:blocks:v3_5:flow→ focus hours/day (already daily)
       const fields = queryResponse.fields.measure_like || [];
-      const row = (data && data[0]) || {};
-      const gv  = i => fields[i] ? (parseFloat(row[fields[i].name]?.value) || 0) : 0;
+      const row    = (data && data[0]) || {};
+      const gv     = i => fields[i] ? (parseFloat(row[fields[i].name]?.value) || 0) : 0;
+
+      // Log every field so we can verify mapping in DevTools console.
+      console.log('[FTL v9] measure fields (' + fields.length + '):',
+        fields.map((f, i) => `[${i}] ${f.name} = ${row[f.name]?.value}`).join(' | '));
+
+      // Find focus field by name pattern – robust to ordering changes.
+      const focusIdx = fields.findIndex(f => /focus/i.test(f.name));
+      const focusVal = focusIdx >= 0 ? gv(focusIdx) : gv(4);
 
       const inputs = {
         numMeetings:     Math.max(1, Math.round((gv(0) / 5) || 4)),
         meetingMinutes:  ((gv(1) / 5) || 2) * 60,   // weekly hours → daily → minutes
         numEmails:       (gv(2) / 5) || 10,
         numChat:         (gv(3) / 5) || 20,
-        focusHoursDaily: gv(4) > 0 ? gv(4) : null,  // daily value; null = skip calibration
-        workStart:       Math.round((config.work_start_hour      || 8)  * 60),
-        workEnd:         Math.round((config.work_end_hour        || 18) * 60),
+        focusHoursDaily: focusVal > 0 ? focusVal : null,
+        workStart:       Math.round((config.work_start_hour || 8)  * 60),
+        workEnd:         Math.round((config.work_end_hour   || 18) * 60),
       };
-      console.log('[FTL v8] inputs:', JSON.stringify(inputs));
+      console.log('[FTL v9] inputs:', JSON.stringify(inputs));
       const renderOpts = {
         rampMin:  config.ramp_minutes              || 12,
         focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
