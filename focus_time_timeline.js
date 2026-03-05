@@ -405,10 +405,18 @@
               margin-top:1px;font-size:13px;color:#5f6368}
   .ftl-li{display:flex;align-items:center;gap:6px}
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
-  .ftl-toggle{cursor:pointer;user-select:none;transition:opacity 0.2s}
-  .ftl-toggle:hover{opacity:0.7}
-  .ftl-toggle.ftl-off{opacity:0.35}
+  .ftl-toggle{cursor:pointer;user-select:none;
+             padding:3px 10px 3px 6px;border-radius:14px;
+             border:1.5px solid rgba(0,0,0,0.14);
+             transition:background 0.15s,opacity 0.2s,border-color 0.15s}
+  .ftl-toggle:hover{background:rgba(0,0,0,0.05);border-color:rgba(0,0,0,0.28)}
+  .ftl-toggle.ftl-off{opacity:0.45;border-style:dashed}
   .ftl-toggle.ftl-off span{text-decoration:line-through}
+  .ftl-toggle .ftl-sw{position:relative;border-radius:3px}
+  .ftl-toggle .ftl-sw::after{content:'✓';position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    color:rgba(255,255,255,0.95);font-size:9px;font-weight:700;line-height:1}
+  .ftl-toggle.ftl-off .ftl-sw::after{content:''}
   @keyframes ftl-bubble{from{transform:scaleY(0);opacity:0}to{transform:scaleY(1);opacity:1}}
   .ftl-shape{transform-box:fill-box;transform-origin:bottom center;
              animation:ftl-bubble 0.55s cubic-bezier(0.34,1.56,0.64,1) both}
