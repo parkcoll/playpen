@@ -607,12 +607,26 @@
       // Gray background bar (full width including buffer zones) — square ends
       p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="${COLOR.bg}"/>`);
 
+      // ── Tooltip text per segment type ──────────────────────────────────
+      const TIP = {
+        focus:      'Focus time, which allows for deep work',
+        fragmented: 'Time lost due to fragmented time',
+        meeting:    'Meeting',
+        email:      'Email sent',
+        chat:       'Chat message sent',
+      };
+
       // Coloured timeline segments (clipped to bar)
       p.push(`<g clip-path="url(#${clipId})">`);
       buildTimeline(events, workStart, workEnd, focusThr).forEach(seg => {
         const x = tx(seg.start);
         const w = Math.max(1.5, tx(seg.end) - x);
-        p.push(`<rect x="${f(x)}" y="${barY}" width="${f(w)}" height="${barH}" fill="${COLOR[seg.type] || COLOR.bg}"/>`);
+        const tip = TIP[seg.type] || '';
+        p.push(
+          `<rect x="${f(x)}" y="${barY}" width="${f(w)}" height="${barH}" fill="${COLOR[seg.type] || COLOR.bg}">` +
+          (tip ? `<title>${tip}</title>` : '') +
+          `</rect>`
+        );
       });
       p.push('</g>');
 
@@ -628,7 +642,7 @@
         const x3  = tx(block.end);
         const rp  = Math.min(rampPx, (x3 - x0) * 0.25);
         const d   = plateauPath(x0, x3, barY, barY - fH, rp);
-        p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"/>`);
+        p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"><title>${TIP.focus}</title></path>`);
       });
 
       // ── Fragmented block arches (light red, rounded, above bar) ────────────
@@ -643,7 +657,7 @@
         const x0   = tx(block.start);
         const x3   = tx(block.end);
         const d    = archPath(x0, x3, barY, barY - fH);
-        p.push(`<path d="${d}" fill="rgba(234,67,53,0.22)" stroke="none"/>`);
+        p.push(`<path d="${d}" fill="rgba(234,67,53,0.22)" stroke="none"><title>${TIP.fragmented}</title></path>`);
       });
 
       // Interruptions (meetings, email, chat) appear only in the bar – no shapes above.
