@@ -398,11 +398,11 @@
        padding:10px 8px 8px;box-sizing:border-box;overflow:hidden;
        font-family:"Google Sans",Roboto,Arial,sans-serif}
   .ftl-chart{flex:1;min-height:0;position:relative;overflow:hidden}
-  .ftl-stats{text-align:center;flex-shrink:0;margin-top:6px;
+  .ftl-stats{text-align:center;flex-shrink:0;margin-top:3px;
              font-size:13px;color:#5f6368;line-height:1.4}
   .ftl-stats b{font-weight:600;color:#3c4043}
   .ftl-legend{display:flex;gap:24px;justify-content:center;flex-shrink:0;
-              margin-top:6px;font-size:13px;color:#5f6368}
+              margin-top:3px;font-size:13px;color:#5f6368}
   .ftl-li{display:flex;align-items:center;gap:6px}
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
 </style>
@@ -549,9 +549,9 @@
 
       // Use the root element's dimensions directly — flex child clientHeight
       // is unreliable in Looker's sandboxed iframe context.
-      // Subtract ~115px for: stats (22px) + legend (28px) + padding (16+8px) + margins + axis labels (26px).
+      // Subtract ~108px for: stats (20px) + legend (24px) + padding (16+8px) + margins + axis labels (26px).
       const W = Math.max(300, element.clientWidth  || 700);
-      const H = Math.max(100, (element.clientHeight || 280) - 115);
+      const H = Math.max(100, (element.clientHeight || 280) - 108);
 
       svg.setAttribute('width',  W);
       svg.setAttribute('height', H);
@@ -638,7 +638,8 @@
       fragBlocks.forEach(block => {
         const dur  = block.end - block.start;
         const pct  = Math.min(1, dur / focusThr); // 0 → 1 as duration approaches threshold
-        const fH   = maxFH * (0.15 + 0.80 * pct); // 15% → 95% of full plateau height
+        // Power curve (pct^0.6) pushes medium blocks higher — e.g. 1h ≈ 73% instead of 55%.
+        const fH   = maxFH * (0.20 + 0.80 * Math.pow(pct, 0.6));
         const x0   = tx(block.start);
         const x3   = tx(block.end);
         const d    = archPath(x0, x3, barY, barY - fH);
