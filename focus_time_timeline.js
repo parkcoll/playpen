@@ -563,35 +563,59 @@
       // Subtle bar border
       p.push(`<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1" rx="${rx}"/>`);
 
+      // ── Pre-compute focus blocks and build region list for ramp limiting ──
+      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
+      const allRegions  = [
+        ...events.map(ev => ({ start: ev.start, end: ev.start + ev.duration })),
+        ...focusBlocks.map(b => ({ start: b.start, end: b.end })),
+      ].sort((a, b) => a.start - b.start);
+
+      // Returns the gap (in minutes) before/after a time range, considering all neighbours.
+      const getGaps = (s, e) => {
+        let prevEnd = workStart, nextStart = workEnd;
+        for (const r of allRegions) {
+          if (r.start === s && r.end === e) continue; // skip self
+          if (r.end <= s && r.end > prevEnd) prevEnd = r.end;
+          if (r.start >= e && r.start < nextStart) nextStart = r.start;
+        }
+        return { before: s - prevEnd, after: nextStart - e };
+      };
+
+      // Convert a gap in minutes to a capped ramp in pixels (≤45% of gap, ≤rampPx).
+      const gapRamp = gapMin => Math.max(0, Math.min(rampPx, ((gapMin / wDur) * cW) * 0.45));
+
       // ── Focus plateau shapes (blue, above bar) ────────────────────────────
-      getFocusBlocks(events, workStart, workEnd, focusThr).forEach(block => {
+      focusBlocks.forEach(block => {
         const dur = block.end - block.start;
-        // Plateau height scales with block duration, capped at maxFH.
         const fH  = Math.min(maxFH, maxFH * (0.40 + 0.60 * Math.min(1, dur / 240)));
         const x0  = tx(block.start);
         const x3  = tx(block.end);
-        // Ramp width: smaller of rampPx and 25% of block width.
         const rp  = Math.min(rampPx, (x3 - x0) * 0.25);
         const d   = plateauPath(x0, x3, barY, barY - fH, rp);
         p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"/>`);
       });
 
-      // ── Interruption humps (salmon/pink, above bar) ───────────────────────
+      // ── Interruption humps (above bar, ramps limited to available gap) ────
       events.forEach(ev => {
-        const nd  = ev.duration / 60; // duration in hours
+        const nd  = ev.duration / 60;
         let iH;
         if (ev.type === 'meeting') {
           iH = maxIH * Math.min(1, 0.28 + 0.72 * Math.sqrt(nd));
         } else if (ev.type === 'email') {
           iH = maxIH * 0.32;
         } else {
-          iH = maxIH * 0.24; // chat
+          iH = maxIH * 0.24;
         }
         iH = Math.max(maxIH * 0.12, iH);
 
+        const evEnd = ev.start + ev.duration;
+        const gaps  = getGaps(ev.start, evEnd);
+        const rL    = gapRamp(gaps.before);
+        const rR    = gapRamp(gaps.after);
+
         const x1 = tx(ev.start);
-        const x2 = tx(ev.start + ev.duration);
-        const d  = humpPath(x1 - rampPx, x1, x2, x2 + rampPx, barY, barY - iH);
+        const x2 = tx(evEnd);
+        const d  = humpPath(x1 - rL, x1, x2, x2 + rR, barY, barY - iH);
         p.push(`<path d="${d}" fill="rgba(234,67,53,0.20)" stroke="none"/>`);
       });
 
