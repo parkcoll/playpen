@@ -385,7 +385,6 @@
   </div>
   <div class="ftl-legend">
     <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div>Focus Time</div>
-    <div class="ftl-li"><div class="ftl-sw" style="background:#F28B82"></div>Fragmented</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#34A853"></div>Email</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#FBBC04"></div>Chat</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#EA4335"></div>Meetings</div>
@@ -553,7 +552,7 @@
       // ── Colors ────────────────────────────────────────────────────────────
       const COLOR = {
         focus:      '#4285F4',
-        fragmented: '#F28B82', // light red – uninterrupted but < 2 h (lost focus)
+        fragmented: '#4285F4', // same blue in the bar – all uninterrupted time is "focus"
         meeting:    '#EA4335',
         email:      '#34A853',
         chat:       '#FBBC04',
@@ -601,18 +600,19 @@
         p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"/>`);
       });
 
-      // ── Fragmented block arches (light red, shorter, above bar) ───────────
-      // Gaps ≥ 15 min and < focusThr – uninterrupted but too short for deep focus.
+      // ── Fragmented block arches (light red above bar, height → focus as dur → 2 h)
+      // Gaps ≥ 15 min and < focusThr. Height scales linearly so a 1h50m block
+      // is almost as tall as a full focus plateau.
       const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
       fragBlocks.forEach(block => {
-        const dur = block.end - block.start;
-        // Shorter arch: ~30-50% of maxFH, scaling with duration.
-        const fH  = Math.min(maxFH * 0.50, maxFH * (0.15 + 0.35 * Math.min(1, dur / 120)));
-        const x0  = tx(block.start);
-        const x3  = tx(block.end);
-        const rp  = Math.min(rampPx, (x3 - x0) * 0.30);
-        const d   = plateauPath(x0, x3, barY, barY - fH, rp);
-        p.push(`<path d="${d}" fill="rgba(234,67,53,0.18)" stroke="none"/>`);
+        const dur  = block.end - block.start;
+        const pct  = Math.min(1, dur / focusThr); // 0 → 1 as duration approaches threshold
+        const fH   = maxFH * (0.15 + 0.80 * pct); // 15% → 95% of full plateau height
+        const x0   = tx(block.start);
+        const x3   = tx(block.end);
+        const rp   = Math.min(rampPx, (x3 - x0) * 0.25);
+        const d    = plateauPath(x0, x3, barY, barY - fH, rp);
+        p.push(`<path d="${d}" fill="rgba(234,67,53,0.22)" stroke="none"/>`);
       });
 
       // Interruptions (meetings, email, chat) appear only in the bar – no shapes above.
