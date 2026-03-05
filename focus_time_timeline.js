@@ -405,6 +405,10 @@
               margin-top:1px;font-size:13px;color:#5f6368}
   .ftl-li{display:flex;align-items:center;gap:6px}
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
+  .ftl-toggle{cursor:pointer;user-select:none;transition:opacity 0.2s}
+  .ftl-toggle:hover{opacity:0.7}
+  .ftl-toggle.ftl-off{opacity:0.35}
+  .ftl-toggle.ftl-off span{text-decoration:line-through}
 </style>
 <div class="ftl">
   <div class="ftl-chart">
@@ -412,10 +416,10 @@
   </div>
   <div class="ftl-stats" id="ftl-stats"></div>
   <div class="ftl-legend">
-    <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div>Focus Time</div>
-    <div class="ftl-li"><div class="ftl-sw" style="background:#34A853"></div>Email</div>
-    <div class="ftl-li"><div class="ftl-sw" style="background:#FBBC04"></div>Chat</div>
-    <div class="ftl-li"><div class="ftl-sw" style="background:#EA4335"></div>Meetings</div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div><span>Focus Time</span></div>
+    <div class="ftl-li ftl-toggle" data-type="email"><div class="ftl-sw" style="background:#34A853"></div><span>Email</span></div>
+    <div class="ftl-li ftl-toggle" data-type="chat"><div class="ftl-sw" style="background:#FBBC04"></div><span>Chat</span></div>
+    <div class="ftl-li ftl-toggle" data-type="meeting"><div class="ftl-sw" style="background:#EA4335"></div><span>Meetings</span></div>
   </div>
 </div>`;
     },
@@ -538,7 +542,38 @@
           );
         }
       }
-      this._draw(element, events, { ...inputs, ...renderOpts });
+      // Persist toggle state across Looker data refreshes.
+      if (!this._disabledTypes) this._disabledTypes = new Set();
+
+      // Store the full (calibrated) event list and draw options for re-use by toggles.
+      this._allEvents = events;
+      this._drawOpts  = { ...inputs, ...renderOpts };
+
+      const filteredEvents = events.filter(e => !this._disabledTypes.has(e.type));
+      this._draw(element, filteredEvents, this._drawOpts);
+
+      // ── Legend toggle handlers ───────────────────────────────────────────
+      const self = this;
+      element.querySelectorAll('.ftl-toggle').forEach(li => {
+        // Replace node to remove any stale listeners from a previous refresh.
+        const fresh = li.cloneNode(true);
+        li.parentNode.replaceChild(fresh, li);
+        const type = fresh.dataset.type;
+        // Restore visual state if this type was already disabled.
+        if (self._disabledTypes.has(type)) fresh.classList.add('ftl-off');
+        fresh.addEventListener('click', () => {
+          if (self._disabledTypes.has(type)) {
+            self._disabledTypes.delete(type);
+            fresh.classList.remove('ftl-off');
+          } else {
+            self._disabledTypes.add(type);
+            fresh.classList.add('ftl-off');
+          }
+          const filtered = self._allEvents.filter(e => !self._disabledTypes.has(e.type));
+          self._draw(element, filtered, self._drawOpts);
+        });
+      });
+
       done();
     },
 
