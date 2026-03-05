@@ -409,6 +409,9 @@
   .ftl-toggle:hover{opacity:0.7}
   .ftl-toggle.ftl-off{opacity:0.35}
   .ftl-toggle.ftl-off span{text-decoration:line-through}
+  @keyframes ftl-bubble{from{transform:scaleY(0);opacity:0}to{transform:scaleY(1);opacity:1}}
+  .ftl-shape{transform-box:fill-box;transform-origin:bottom center;
+             animation:ftl-bubble 0.55s cubic-bezier(0.34,1.56,0.64,1) both}
 </style>
 <div class="ftl">
   <div class="ftl-chart">
@@ -672,31 +675,45 @@
       // Subtle bar border — square ends
       p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1"/>`);
 
-      // ── Focus plateau shapes (blue, above bar) ────────────────────────────
+      // ── Above-bar shapes (focus plateaus + fragmented arches) ───────────────
+      // Collect both shape types and sort by start time so the staggered
+      // animation delay follows left-to-right visual order.
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
-      focusBlocks.forEach(block => {
-        const dur = block.end - block.start;
-        const fH  = Math.min(maxFH, maxFH * (0.40 + 0.60 * Math.min(1, dur / 240)));
-        const x0  = tx(block.start);
-        const x3  = tx(block.end);
-        const rp  = Math.min(rampPx, (x3 - x0) * 0.25);
-        const d   = plateauPath(x0, x3, barY, barY - fH, rp);
-        p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"><title>${TIP.focus}</title></path>`);
-      });
+      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
 
-      // ── Fragmented block arches (light red, rounded, above bar) ────────────
-      // Gaps ≥ 15 min and < focusThr. Height scales so longer blocks approach
-      // focus-plateau height. Shape is always a smooth arch (no flat top).
-      const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
-      fragBlocks.forEach(block => {
-        const dur  = block.end - block.start;
-        const pct  = Math.min(1, dur / focusThr); // 0 → 1 as duration approaches threshold
-        // Power curve (pct^0.6) pushes medium blocks higher — e.g. 1h ≈ 73% instead of 55%.
-        const fH   = maxFH * (0.20 + 0.80 * Math.pow(pct, 0.6));
-        const x0   = tx(block.start);
-        const x3   = tx(block.end);
-        const d    = archPath(x0, x3, barY, barY - fH);
-        p.push(`<path d="${d}" fill="rgba(234,67,53,0.22)" stroke="none"><title>${TIP.fragmented}</title></path>`);
+      const allShapes = [
+        ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
+        ...fragBlocks.map(b  => ({ ...b, kind: 'fragmented' })),
+      ].sort((a, b) => a.start - b.start);
+
+      allShapes.forEach((block, idx) => {
+        const delay = (0.05 + idx * 0.04).toFixed(2);
+        if (block.kind === 'focus') {
+          const dur = block.end - block.start;
+          const fH  = Math.min(maxFH, maxFH * (0.40 + 0.60 * Math.min(1, dur / 240)));
+          const x0  = tx(block.start);
+          const x3  = tx(block.end);
+          const rp  = Math.min(rampPx, (x3 - x0) * 0.25);
+          const d   = plateauPath(x0, x3, barY, barY - fH, rp);
+          p.push(
+            `<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none" ` +
+            `class="ftl-shape" style="animation-delay:${delay}s">` +
+            `<title>${TIP.focus}</title></path>`
+          );
+        } else {
+          const dur = block.end - block.start;
+          const pct = Math.min(1, dur / focusThr); // 0 → 1 as duration approaches threshold
+          // Power curve (pct^0.6) pushes medium blocks higher — e.g. 1h ≈ 73% instead of 55%.
+          const fH  = maxFH * (0.20 + 0.80 * Math.pow(pct, 0.6));
+          const x0  = tx(block.start);
+          const x3  = tx(block.end);
+          const d   = archPath(x0, x3, barY, barY - fH);
+          p.push(
+            `<path d="${d}" fill="rgba(234,67,53,0.22)" stroke="none" ` +
+            `class="ftl-shape" style="animation-delay:${delay}s">` +
+            `<title>${TIP.fragmented}</title></path>`
+          );
+        }
       });
 
       // Interruptions (meetings, email, chat) appear only in the bar – no shapes above.
