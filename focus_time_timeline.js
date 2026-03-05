@@ -396,8 +396,8 @@
 <style>
   .ftl{display:flex;flex-direction:column;width:100%;height:100%;
        padding:10px 8px 8px;box-sizing:border-box;overflow:hidden;
-       font-family:"Google Sans",Roboto,Arial,sans-serif}
-  .ftl-chart{flex:1;min-height:0;position:relative;overflow:hidden}
+       font-family:"Google Sans",Roboto,Arial,sans-serif;justify-content:center}
+  .ftl-chart{flex-shrink:0;position:relative;overflow:hidden}
   .ftl-stats{text-align:center;flex-shrink:0;margin-top:0;
              font-size:13px;color:#5f6368;line-height:1.4}
   .ftl-stats b{font-weight:600;color:#3c4043}
