@@ -397,8 +397,11 @@
        padding:10px 8px 8px;box-sizing:border-box;overflow:hidden;
        font-family:"Google Sans",Roboto,Arial,sans-serif}
   .ftl-chart{flex:1;min-height:0;position:relative;overflow:hidden}
+  .ftl-stats{text-align:center;flex-shrink:0;margin-top:6px;
+             font-size:13px;color:#5f6368;line-height:1.4}
+  .ftl-stats b{font-weight:600;color:#3c4043}
   .ftl-legend{display:flex;gap:24px;justify-content:center;flex-shrink:0;
-              margin-top:8px;font-size:13px;color:#5f6368}
+              margin-top:6px;font-size:13px;color:#5f6368}
   .ftl-li{display:flex;align-items:center;gap:6px}
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
 </style>
@@ -406,6 +409,7 @@
   <div class="ftl-chart">
     <svg id="ftl-svg" style="display:block;overflow:hidden"></svg>
   </div>
+  <div class="ftl-stats" id="ftl-stats"></div>
   <div class="ftl-legend">
     <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div>Focus Time</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#34A853"></div>Email</div>
@@ -544,9 +548,9 @@
 
       // Use the root element's dimensions directly — flex child clientHeight
       // is unreliable in Looker's sandboxed iframe context.
-      // Subtract ~90px for: legend (28px) + padding (16+8px) + margins + axis labels (26px).
+      // Subtract ~115px for: stats (22px) + legend (28px) + padding (16+8px) + margins + axis labels (26px).
       const W = Math.max(300, element.clientWidth  || 700);
-      const H = Math.max(100, (element.clientHeight || 280) - 90);
+      const H = Math.max(100, (element.clientHeight || 280) - 115);
 
       svg.setAttribute('width',  W);
       svg.setAttribute('height', H);
@@ -663,6 +667,23 @@
       }
 
       svg.innerHTML = p.join('\n');
+
+      // ── Summary stats ───────────────────────────────────────────────────
+      const statsEl = element.querySelector('#ftl-stats');
+      if (statsEl) {
+        // Count interruptions (meetings, email, chat events – exclude 'gap' phantoms)
+        const interruptions = events.filter(e => e.type === 'meeting' || e.type === 'email' || e.type === 'chat').length;
+
+        // Sum fragmented time (blocks ≥15 min but < focusThr)
+        const fragMin = fragBlocks.reduce((s, b) => s + (b.end - b.start), 0);
+        const fragH   = Math.floor(fragMin / 60);
+        const fragM   = Math.round(fragMin % 60);
+        const fragStr = fragH > 0 ? `${fragH}h ${fragM}m` : `${fragM}m`;
+
+        statsEl.innerHTML =
+          `<b>${interruptions}</b> interruption${interruptions !== 1 ? 's' : ''} · ` +
+          `<b>${fragStr}</b> lost to fragmentation`;
+      }
     },
   });
 })();
