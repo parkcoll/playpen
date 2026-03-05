@@ -156,11 +156,12 @@
       return null;
     };
 
-    const emailClusters = Math.max(1, Math.round(numEmails / 5));
+    // Email sessions: each cluster = a short burst of sending/replying.
+    const emailClusters = Math.max(2, Math.round(numEmails / 3));
     // Chat happens in conversational bursts – more clusters, each ~5 min.
     const chatClusters  = Math.max(2, Math.round(numChat   / 4));
 
-    const emailEvents = Array.from({ length: emailClusters }, () => tryPlace('email', 5)).filter(Boolean);
+    const emailEvents = Array.from({ length: emailClusters }, () => tryPlace('email', 5, 5)).filter(Boolean);
     // Smaller buffer (5 min) for chat so clusters can be placed closer together.
     const chatEvents  = Array.from({ length: chatClusters  }, () => tryPlace('chat',  5, 5)).filter(Boolean);
 
@@ -589,25 +590,24 @@
       // ── Build SVG ─────────────────────────────────────────────────────────
       const p      = [];
       const clipId = 'ftl-bar-clip';
-      const rx     = Math.round(barH * 0.45); // border-radius for bar ends
 
       // Full bar width including gray buffers
       const fullBarX = ML - grayBuf;
       const fullBarW = cW + grayBuf * 2;
 
-      // Clip path so coloured segments inherit the bar's rounded corners.
+      // Clip path — square ends
       p.push(
         `<defs>` +
         `<clipPath id="${clipId}">` +
-        `<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" rx="${rx}"/>` +
+        `<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}"/>` +
         `</clipPath>` +
         `</defs>`
       );
 
-      // Gray background bar (full width including buffer zones)
-      p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="${COLOR.bg}" rx="${rx}"/>`);
+      // Gray background bar (full width including buffer zones) — square ends
+      p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="${COLOR.bg}"/>`);
 
-      // Coloured timeline segments (clipped to rounded bar)
+      // Coloured timeline segments (clipped to bar)
       p.push(`<g clip-path="url(#${clipId})">`);
       buildTimeline(events, workStart, workEnd, focusThr).forEach(seg => {
         const x = tx(seg.start);
@@ -616,8 +616,8 @@
       });
       p.push('</g>');
 
-      // Subtle bar border
-      p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1" rx="${rx}"/>`);
+      // Subtle bar border — square ends
+      p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1"/>`);
 
       // ── Focus plateau shapes (blue, above bar) ────────────────────────────
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
@@ -671,18 +671,24 @@
       // ── Summary stats ───────────────────────────────────────────────────
       const statsEl = element.querySelector('#ftl-stats');
       if (statsEl) {
+        const fmtTime = min => {
+          const h = Math.floor(min / 60), m = Math.round(min % 60);
+          return h > 0 ? `${h}h ${m}m` : `${m}m`;
+        };
+
         // Count interruptions (meetings, email, chat events – exclude 'gap' phantoms)
         const interruptions = events.filter(e => e.type === 'meeting' || e.type === 'email' || e.type === 'chat').length;
 
+        // Sum focus time (blocks ≥ focusThr)
+        const focusMin = focusBlocks.reduce((s, b) => s + (b.end - b.start), 0);
+
         // Sum fragmented time (blocks ≥15 min but < focusThr)
         const fragMin = fragBlocks.reduce((s, b) => s + (b.end - b.start), 0);
-        const fragH   = Math.floor(fragMin / 60);
-        const fragM   = Math.round(fragMin % 60);
-        const fragStr = fragH > 0 ? `${fragH}h ${fragM}m` : `${fragM}m`;
 
         statsEl.innerHTML =
           `<b>${interruptions}</b> interruption${interruptions !== 1 ? 's' : ''} · ` +
-          `<b>${fragStr}</b> lost to fragmentation`;
+          `<b>${fmtTime(focusMin)}</b> focus time · ` +
+          `<b>${fmtTime(fragMin)}</b> lost to fragmentation`;
       }
     },
   });
