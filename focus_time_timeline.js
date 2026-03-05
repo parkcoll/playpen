@@ -381,57 +381,85 @@
       if (titleEl) titleEl.textContent = config.chart_title || 'But in reality, interruptions occur';
 
       // ── Extract metric values ─────────────────────────────────────────────
-      // Support two data layouts:
+      // Supports three Looker data layouts:
       //   A) Multiple measure columns, one row (each column = a metric)
-      //   B) Key-value rows: dimension = metric key, measure = value (e.g. p50)
+      //   B) Key-value rows: dimension = metric key, measure = value
+      //   C) Pivoted: metric keys are pivot columns on a single measure (p50)
       const dims     = queryResponse.fields.dimension_like || [];
       const measures = queryResponse.fields.measure_like   || [];
+      const pivots   = queryResponse.fields.pivots         || [];
+      const row      = data[0] || {};
 
-      console.log('[FTL v10] schema — dims:', dims.map(d => d.name),
-                  'measures:', measures.map(m => m.name), 'rows:', data.length);
+      console.log('[FTL v11] schema — dims:', dims.map(d => d.name),
+                  'measures:', measures.map(m => m.name),
+                  'pivots:', pivots.map(p => p.name), 'rows:', data.length);
 
       let meetingsAttended = 0, meetingHours = 0, emailsSent = 0,
           chatSent = 0, focusHours = 0;
 
+      // Helper: search an object's keys by substring patterns
+      const findInLookup = (lookup, ...patterns) => {
+        for (const [k, v] of Object.entries(lookup)) {
+          if (patterns.some(p => k.includes(p))) return v;
+        }
+        return 0;
+      };
+
       if (measures.length >= 4) {
         // ── Layout A: each measure is a distinct metric ──────────────────
-        const row = data[0] || {};
-        const gv  = i => parseFloat(row[measures[i]?.name]?.value) || 0;
+        const gv = i => parseFloat(row[measures[i]?.name]?.value) || 0;
         meetingsAttended = gv(0);
         meetingHours     = gv(1);
         emailsSent       = gv(2);
         chatSent         = gv(3);
         const fi = measures.findIndex(f => /focus/i.test(f.name));
         focusHours = fi >= 0 ? gv(fi) : gv(4);
-      } else {
-        // ── Layout B: dimension = metric key, measure = value (p50) ──────
+
+      } else if (pivots.length > 0 || (measures.length === 1 && dims.length === 0)) {
+        // ── Layout C: pivoted data (metric keys as pivot columns) ────────
+        // row[measureName] is an object: { "pivot_key": { value: … }, … }
+        const valName   = measures[0]?.name;
+        const pivotData = valName ? row[valName] : {};
+        const lookup    = {};
+        if (pivotData && typeof pivotData === 'object') {
+          for (const [key, cell] of Object.entries(pivotData)) {
+            // cell can be { value: N } or just a number
+            const raw = typeof cell === 'object' ? cell?.value : cell;
+            const val = parseFloat(raw);
+            if (!isNaN(val)) lookup[key.toLowerCase()] = val;
+          }
+        }
+        console.log('[FTL v11] pivot lookup:', JSON.stringify(lookup));
+
+        meetingsAttended = findInLookup(lookup, 'attended', 'events_attended', 'events:attended');
+        meetingHours     = findInLookup(lookup, 'hours_meeting', 'hours:meeting',
+                                        'hours:meetings', 'meeting_hours', 'calendar_hours');
+        emailsSent       = findInLookup(lookup, 'emails_sent', 'emails:sent', 'email_sent', 'email');
+        chatSent         = findInLookup(lookup, 'message_sent', 'messages_sent',
+                                        'message:sent', 'slack');
+        focusHours       = findInLookup(lookup, 'focus');
+
+      } else if (dims.length > 0) {
+        // ── Layout B: key-value rows ─────────────────────────────────────
         const dimName = dims[0]?.name;
         const valName = measures[0]?.name;
         if (dimName && valName) {
           const lookup = {};
-          for (const row of data) {
-            const key = String(row[dimName]?.value || '').toLowerCase();
-            const val = parseFloat(row[valName]?.value);
+          for (const r of data) {
+            const key = String(r[dimName]?.value || '').toLowerCase();
+            const val = parseFloat(r[valName]?.value);
             if (key && !isNaN(val)) lookup[key] = val;
           }
-          console.log('[FTL v10] metric lookup:', JSON.stringify(lookup));
-
-          const find = (...patterns) => {
-            for (const [k, v] of Object.entries(lookup)) {
-              if (patterns.some(p => k.includes(p))) return v;
-            }
-            return 0;
-          };
-          meetingsAttended = find('attended', 'events_attended', 'events:attended');
-          meetingHours     = find('hours_meeting', 'hours:meeting', 'meeting_hours',
-                                  'hours:meetings', 'calendar_hours');
-          emailsSent       = find('emails_sent', 'emails:sent', 'email_sent', 'email');
-          chatSent         = find('message_sent', 'messages_sent', 'message:sent', 'slack');
-          focusHours       = find('focus');
+          console.log('[FTL v11] kv lookup:', JSON.stringify(lookup));
+          meetingsAttended = findInLookup(lookup, 'attended', 'events:attended');
+          meetingHours     = findInLookup(lookup, 'hours:meeting', 'hours:meetings');
+          emailsSent       = findInLookup(lookup, 'emails:sent', 'email');
+          chatSent         = findInLookup(lookup, 'message:sent', 'message_sent', 'slack');
+          focusHours       = findInLookup(lookup, 'focus');
         }
       }
 
-      console.log('[FTL v10] raw:', { meetingsAttended, meetingHours, emailsSent, chatSent, focusHours });
+      console.log('[FTL v11] raw:', { meetingsAttended, meetingHours, emailsSent, chatSent, focusHours });
 
       const inputs = {
         numMeetings:     Math.max(1, Math.round((meetingsAttended / 5) || 4)),
@@ -442,7 +470,7 @@
         workStart:       Math.round((config.work_start_hour || 8)  * 60),
         workEnd:         Math.round((config.work_end_hour   || 18) * 60),
       };
-      console.log('[FTL v10] inputs:', JSON.stringify(inputs));
+      console.log('[FTL v11] inputs:', JSON.stringify(inputs));
       const renderOpts = {
         rampMin:  config.ramp_minutes              || 12,
         focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
