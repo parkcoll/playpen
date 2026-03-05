@@ -574,7 +574,7 @@
       const maxFH  = Math.round(barY * 0.80); // max height of focus plateau
 
       // Set SVG height to content height + gap before stats.
-      const svgH = barY + barH + 34; // 24px label + 10px gap
+      const svgH = barY + barH + 56; // 24px label + 32px gap
       svg.setAttribute('height', svgH);
 
       // ── Coordinate helpers ─────────────────────────────────────────────────
