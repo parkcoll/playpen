@@ -170,20 +170,21 @@
 
   /**
    * Converts an event list into an ordered array of coloured bar segments.
-   * Gaps >= focusThr minutes are classified as 'focus'; shorter gaps as 'gap'.
+   * Gaps >= focusThr are 'focus'; shorter gaps are 'fragmented'.
    */
   function buildTimeline(events, workStart, workEnd, focusThr) {
+    const classify = dur => dur >= focusThr ? 'focus' : 'fragmented';
     const segs = [];
     let t = workStart;
     for (const ev of events) {
       if (ev.start > t) {
-        segs.push({ start: t, end: ev.start, type: (ev.start - t) >= focusThr ? 'focus' : 'gap' });
+        segs.push({ start: t, end: ev.start, type: classify(ev.start - t) });
       }
       segs.push({ start: ev.start, end: ev.start + ev.duration, type: ev.type });
       t = ev.start + ev.duration;
     }
     if (t < workEnd) {
-      segs.push({ start: t, end: workEnd, type: (workEnd - t) >= focusThr ? 'focus' : 'gap' });
+      segs.push({ start: t, end: workEnd, type: classify(workEnd - t) });
     }
     return segs;
   }
@@ -200,6 +201,23 @@
       t = ev.start + ev.duration;
     }
     if (workEnd - t >= focusThr) blocks.push({ start: t, end: workEnd });
+    return blocks;
+  }
+
+  /**
+   * Returns contiguous gaps that are shorter than focusThr but at least minGap minutes.
+   * These are "fragmented focus" blocks – uninterrupted but too short to count as focus.
+   */
+  function getFragmentedBlocks(events, workStart, workEnd, focusThr, minGap) {
+    const blocks = [];
+    let t = workStart;
+    for (const ev of events) {
+      const gap = ev.start - t;
+      if (gap >= minGap && gap < focusThr) blocks.push({ start: t, end: ev.start });
+      t = ev.start + ev.duration;
+    }
+    const gap = workEnd - t;
+    if (gap >= minGap && gap < focusThr) blocks.push({ start: t, end: workEnd });
     return blocks;
   }
 
@@ -367,6 +385,7 @@
   </div>
   <div class="ftl-legend">
     <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div>Focus Time</div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:#A8C7FA"></div>Fragmented</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#34A853"></div>Email</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#FBBC04"></div>Chat</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#EA4335"></div>Meetings</div>
@@ -390,19 +409,36 @@
       const pivots   = queryResponse.fields.pivots         || [];
       const row      = data[0] || {};
 
-      console.log('[FTL v11] schema — dims:', dims.map(d => d.name),
+      console.log('[FTL v12] schema — dims:', dims.map(d => d.name),
                   'measures:', measures.map(m => m.name),
                   'pivots:', pivots.map(p => p.name), 'rows:', data.length);
 
       let meetingsAttended = 0, meetingHours = 0, emailsSent = 0,
-          chatSent = 0, focusHours = 0;
+          chatSent = 0, focusHours = 0, fragmentedHours = 0;
 
-      // Helper: search an object's keys by substring patterns
-      const findInLookup = (lookup, ...patterns) => {
+      // Helper: search an object's keys by substring patterns.
+      // Optional `exclude` array skips keys containing those substrings.
+      const findInLookup = (lookup, patterns, exclude) => {
         for (const [k, v] of Object.entries(lookup)) {
+          if (exclude && exclude.some(e => k.includes(e))) continue;
           if (patterns.some(p => k.includes(p))) return v;
         }
         return 0;
+      };
+
+      // Shared helper to extract all metrics from a lookup object.
+      const extractMetrics = (lookup) => {
+        meetingsAttended = findInLookup(lookup,
+          ['attended', 'events_attended', 'events:attended']);
+        meetingHours = findInLookup(lookup,
+          ['hours_meeting', 'hours:meeting', 'hours:meetings', 'meeting_hours', 'calendar_hours']);
+        emailsSent = findInLookup(lookup,
+          ['emails_sent', 'emails:sent', 'email_sent', 'email']);
+        chatSent = findInLookup(lookup,
+          ['message_sent', 'messages_sent', 'message:sent', 'slack']);
+        // 'focus' appears in both focus and fragmented keys — exclude 'fragment' for focus.
+        focusHours      = findInLookup(lookup, ['focus'], ['fragment']);
+        fragmentedHours = findInLookup(lookup, ['fragment']);
       };
 
       if (measures.length >= 4) {
@@ -412,32 +448,25 @@
         meetingHours     = gv(1);
         emailsSent       = gv(2);
         chatSent         = gv(3);
-        const fi = measures.findIndex(f => /focus/i.test(f.name));
+        const fi = measures.findIndex(f => /focus/i.test(f.name) && !/fragment/i.test(f.name));
         focusHours = fi >= 0 ? gv(fi) : gv(4);
+        const fri = measures.findIndex(f => /fragment/i.test(f.name));
+        fragmentedHours = fri >= 0 ? gv(fri) : 0;
 
       } else if (pivots.length > 0 || (measures.length === 1 && dims.length === 0)) {
         // ── Layout C: pivoted data (metric keys as pivot columns) ────────
-        // row[measureName] is an object: { "pivot_key": { value: … }, … }
         const valName   = measures[0]?.name;
         const pivotData = valName ? row[valName] : {};
         const lookup    = {};
         if (pivotData && typeof pivotData === 'object') {
           for (const [key, cell] of Object.entries(pivotData)) {
-            // cell can be { value: N } or just a number
             const raw = typeof cell === 'object' ? cell?.value : cell;
             const val = parseFloat(raw);
             if (!isNaN(val)) lookup[key.toLowerCase()] = val;
           }
         }
-        console.log('[FTL v11] pivot lookup:', JSON.stringify(lookup));
-
-        meetingsAttended = findInLookup(lookup, 'attended', 'events_attended', 'events:attended');
-        meetingHours     = findInLookup(lookup, 'hours_meeting', 'hours:meeting',
-                                        'hours:meetings', 'meeting_hours', 'calendar_hours');
-        emailsSent       = findInLookup(lookup, 'emails_sent', 'emails:sent', 'email_sent', 'email');
-        chatSent         = findInLookup(lookup, 'message_sent', 'messages_sent',
-                                        'message:sent', 'slack');
-        focusHours       = findInLookup(lookup, 'focus');
+        console.log('[FTL v12] pivot lookup:', JSON.stringify(lookup));
+        extractMetrics(lookup);
 
       } else if (dims.length > 0) {
         // ── Layout B: key-value rows ─────────────────────────────────────
@@ -450,27 +479,25 @@
             const val = parseFloat(r[valName]?.value);
             if (key && !isNaN(val)) lookup[key] = val;
           }
-          console.log('[FTL v11] kv lookup:', JSON.stringify(lookup));
-          meetingsAttended = findInLookup(lookup, 'attended', 'events:attended');
-          meetingHours     = findInLookup(lookup, 'hours:meeting', 'hours:meetings');
-          emailsSent       = findInLookup(lookup, 'emails:sent', 'email');
-          chatSent         = findInLookup(lookup, 'message:sent', 'message_sent', 'slack');
-          focusHours       = findInLookup(lookup, 'focus');
+          console.log('[FTL v12] kv lookup:', JSON.stringify(lookup));
+          extractMetrics(lookup);
         }
       }
 
-      console.log('[FTL v11] raw:', { meetingsAttended, meetingHours, emailsSent, chatSent, focusHours });
+      console.log('[FTL v12] raw:', { meetingsAttended, meetingHours, emailsSent, chatSent,
+                                       focusHours, fragmentedHours });
 
       const inputs = {
-        numMeetings:     Math.max(1, Math.round((meetingsAttended / 5) || 4)),
-        meetingMinutes:  ((meetingHours / 5) || 2) * 60,   // weekly hours → daily → minutes
-        numEmails:       (emailsSent / 5) || 10,
-        numChat:         (chatSent / 5) || 20,
-        focusHoursDaily: focusHours > 0 ? focusHours : null,
-        workStart:       Math.round((config.work_start_hour || 8)  * 60),
-        workEnd:         Math.round((config.work_end_hour   || 18) * 60),
+        numMeetings:          Math.max(1, Math.round((meetingsAttended / 5) || 4)),
+        meetingMinutes:       ((meetingHours / 5) || 2) * 60,   // weekly hours → daily → minutes
+        numEmails:            (emailsSent / 5) || 10,
+        numChat:              (chatSent / 5) || 20,
+        focusHoursDaily:      focusHours > 0 ? focusHours : null,
+        fragmentedHoursDaily: fragmentedHours > 0 ? fragmentedHours : null, // daily, < 2 h blocks
+        workStart:            Math.round((config.work_start_hour || 8)  * 60),
+        workEnd:              Math.round((config.work_end_hour   || 18) * 60),
       };
-      console.log('[FTL v11] inputs:', JSON.stringify(inputs));
+      console.log('[FTL v12] inputs:', JSON.stringify(inputs));
       const renderOpts = {
         rampMin:  config.ramp_minutes              || 12,
         focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
@@ -526,12 +553,12 @@
 
       // ── Colors ────────────────────────────────────────────────────────────
       const COLOR = {
-        focus:   '#4285F4',
-        gap:     '#EA4335', // insufficient focus (< 2 h) – same red as meetings
-        meeting: '#EA4335',
-        email:   '#34A853',
-        chat:    '#FBBC04',
-        bg:      '#E8EAED',
+        focus:      '#4285F4',
+        fragmented: '#A8C7FA', // lighter blue – uninterrupted but < 2 h
+        meeting:    '#EA4335',
+        email:      '#34A853',
+        chat:       '#FBBC04',
+        bg:         '#E8EAED',
       };
 
       // ── Build SVG ─────────────────────────────────────────────────────────
@@ -563,11 +590,13 @@
       // Subtle bar border
       p.push(`<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1" rx="${rx}"/>`);
 
-      // ── Pre-compute focus blocks and build region list for ramp limiting ──
+      // ── Pre-compute shaped blocks and build region list for ramp limiting ─
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
+      const fragBlocks0 = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
       const allRegions  = [
         ...events.map(ev => ({ start: ev.start, end: ev.start + ev.duration })),
         ...focusBlocks.map(b => ({ start: b.start, end: b.end })),
+        ...fragBlocks0.map(b => ({ start: b.start, end: b.end })),
       ].sort((a, b) => a.start - b.start);
 
       // Returns the gap (in minutes) before/after a time range, considering all neighbours.
@@ -593,6 +622,19 @@
         const rp  = Math.min(rampPx, (x3 - x0) * 0.25);
         const d   = plateauPath(x0, x3, barY, barY - fH, rp);
         p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"/>`);
+      });
+
+      // ── Fragmented block arches (light blue, shorter, above bar) ──────────
+      // Gaps ≥ 15 min and < focusThr – uninterrupted but too short for "deep focus".
+      fragBlocks0.forEach(block => {
+        const dur = block.end - block.start;
+        // Shorter arch: ~30-50% of maxFH, scaling with duration.
+        const fH  = Math.min(maxFH * 0.50, maxFH * (0.15 + 0.35 * Math.min(1, dur / 120)));
+        const x0  = tx(block.start);
+        const x3  = tx(block.end);
+        const rp  = Math.min(rampPx, (x3 - x0) * 0.30);
+        const d   = plateauPath(x0, x3, barY, barY - fH, rp);
+        p.push(`<path d="${d}" fill="rgba(168,199,250,0.30)" stroke="none"/>`);
       });
 
       // ── Interruption humps (above bar, ramps limited to available gap) ────
