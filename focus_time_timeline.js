@@ -143,12 +143,13 @@
       ...(hasFocus ? [{ s: focusStart - focusBuf, e: focusEnd + focusBuf }] : []),
     ];
 
-    const tryPlace = (type, duration) => {
-      for (let attempt = 0; attempt < 40; attempt++) {
+    const tryPlace = (type, duration, buffer) => {
+      buffer = buffer ?? 10;
+      for (let attempt = 0; attempt < 60; attempt++) {
         const t = Math.round(aStart + rng() * (aLen - duration));
         if (hasFocus && t + duration > focusStart - focusBuf && t < focusEnd + focusBuf) continue;
         if (!occupied.some(o => t < o.e && t + duration > o.s)) {
-          occupied.push({ s: t - 10, e: t + duration + 10 });
+          occupied.push({ s: t - buffer, e: t + duration + buffer });
           return { type, start: t, duration };
         }
       }
@@ -156,10 +157,12 @@
     };
 
     const emailClusters = Math.max(1, Math.round(numEmails / 5));
-    const chatClusters  = Math.max(1, Math.round(numChat   / 8));
+    // Chat happens in conversational bursts – more clusters, each ~5 min.
+    const chatClusters  = Math.max(2, Math.round(numChat   / 4));
 
     const emailEvents = Array.from({ length: emailClusters }, () => tryPlace('email', 5)).filter(Boolean);
-    const chatEvents  = Array.from({ length: chatClusters  }, () => tryPlace('chat',  3)).filter(Boolean);
+    // Smaller buffer (5 min) for chat so clusters can be placed closer together.
+    const chatEvents  = Array.from({ length: chatClusters  }, () => tryPlace('chat',  5, 5)).filter(Boolean);
 
     return [...validMeetings, ...emailEvents, ...chatEvents].sort((a, b) => a.start - b.start);
   }
@@ -308,12 +311,14 @@
    */
   function archPath(x0, x3, y0, y1) {
     const w   = x3 - x0;
-    const cx  = w * 0.30; // bezier handle offset for a smooth bell
     const mx  = (x0 + x3) / 2;
+    const hx  = w * 0.22; // horizontal handle spread
+    // Outer control points at peak height (y1) → steep rise from edges;
+    // inner handles also at y1 → smooth rounded top.
     return (
       `M${f(x0)},${f(y0)} ` +
-      `C${f(x0 + cx)},${f(y0)} ${f(mx - cx * 0.3)},${f(y1)} ${f(mx)},${f(y1)} ` +
-      `C${f(mx + cx * 0.3)},${f(y1)} ${f(x3 - cx)},${f(y0)} ${f(x3)},${f(y0)} Z`
+      `C${f(x0 + hx)},${f(y1)} ${f(mx - hx)},${f(y1)} ${f(mx)},${f(y1)} ` +
+      `C${f(mx + hx)},${f(y1)} ${f(x3 - hx)},${f(y1)} ${f(x3)},${f(y0)} Z`
     );
   }
 
@@ -422,7 +427,7 @@
       const pivots   = queryResponse.fields.pivots         || [];
       const row      = data[0] || {};
 
-      console.log('[FTL v12] schema — dims:', dims.map(d => d.name),
+      console.log('[FTL v16] schema — dims:', dims.map(d => d.name),
                   'measures:', measures.map(m => m.name),
                   'pivots:', pivots.map(p => p.name), 'rows:', data.length);
 
@@ -478,7 +483,7 @@
             if (!isNaN(val)) lookup[key.toLowerCase()] = val;
           }
         }
-        console.log('[FTL v12] pivot lookup:', JSON.stringify(lookup));
+        console.log('[FTL v16] pivot lookup:', JSON.stringify(lookup));
         extractMetrics(lookup);
 
       } else if (dims.length > 0) {
@@ -492,12 +497,12 @@
             const val = parseFloat(r[valName]?.value);
             if (key && !isNaN(val)) lookup[key] = val;
           }
-          console.log('[FTL v12] kv lookup:', JSON.stringify(lookup));
+          console.log('[FTL v16] kv lookup:', JSON.stringify(lookup));
           extractMetrics(lookup);
         }
       }
 
-      console.log('[FTL v12] raw:', { meetingsAttended, meetingHours, emailsSent, chatSent,
+      console.log('[FTL v16] raw:', { meetingsAttended, meetingHours, emailsSent, chatSent,
                                        focusHours, fragmentedHours });
 
       const inputs = {
@@ -510,7 +515,7 @@
         workStart:            Math.round((config.work_start_hour || 8)  * 60),
         workEnd:              Math.round((config.work_end_hour   || 18) * 60),
       };
-      console.log('[FTL v12] inputs:', JSON.stringify(inputs));
+      console.log('[FTL v16] inputs:', JSON.stringify(inputs));
       const renderOpts = {
         rampMin:  config.ramp_minutes              || 12,
         focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
