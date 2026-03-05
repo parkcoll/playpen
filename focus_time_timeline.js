@@ -398,11 +398,11 @@
        padding:10px 8px 8px;box-sizing:border-box;overflow:hidden;
        font-family:"Google Sans",Roboto,Arial,sans-serif}
   .ftl-chart{flex:1;min-height:0;position:relative;overflow:hidden}
-  .ftl-stats{text-align:center;flex-shrink:0;margin-top:3px;
+  .ftl-stats{text-align:center;flex-shrink:0;margin-top:0;
              font-size:13px;color:#5f6368;line-height:1.4}
   .ftl-stats b{font-weight:600;color:#3c4043}
   .ftl-legend{display:flex;gap:24px;justify-content:center;flex-shrink:0;
-              margin-top:3px;font-size:13px;color:#5f6368}
+              margin-top:1px;font-size:13px;color:#5f6368}
   .ftl-li{display:flex;align-items:center;gap:6px}
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
 </style>
@@ -549,12 +549,12 @@
 
       // Use the root element's dimensions directly — flex child clientHeight
       // is unreliable in Looker's sandboxed iframe context.
-      // Subtract ~108px for: stats (20px) + legend (24px) + padding (16+8px) + margins + axis labels (26px).
       const W = Math.max(300, element.clientWidth  || 700);
+      // H is the available space; SVG height is set to content height after layout is computed.
       const H = Math.max(100, (element.clientHeight || 280) - 108);
 
-      svg.setAttribute('width',  W);
-      svg.setAttribute('height', H);
+      svg.setAttribute('width', W);
+      // Height set below, after barY/barH are computed, so SVG is exactly as tall as its content.
 
       // Chart margins – generous to avoid clipping at edges
       const ML   = 36;
@@ -572,6 +572,10 @@
       const barY   = Math.round(H * 0.62);
       const barH   = Math.max(20, Math.round(H * 0.15));
       const maxFH  = Math.round(barY * 0.80); // max height of focus plateau
+
+      // Set SVG height to exactly content height so there's no dead space below labels.
+      const svgH = barY + barH + 24; // 24px for hour label text below bar
+      svg.setAttribute('height', svgH);
 
       // ── Coordinate helpers ─────────────────────────────────────────────────
       const tx     = t   => ML + ((t - workStart) / wDur) * cW; // time → x pixel
