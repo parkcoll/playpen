@@ -558,7 +558,8 @@
       const wDur = workEnd - workStart;
 
       // Gray buffer width (non-work time at day edges)
-      const grayBuf = Math.round(cW * 0.03); // ~3% of chart width each side
+      // Capped so it never exceeds margins (which would clip the rounded corners).
+      const grayBuf = Math.min(Math.round(cW * 0.03), ML - 4, MR - 4);
 
       // ── Layout constants ───────────────────────────────────────────────────
       // The bar sits at ~62% of the chart height from the top; the area
