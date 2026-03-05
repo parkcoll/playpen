@@ -100,12 +100,16 @@
       for (const w of windows) {
         const wLen = Math.max(0, w.end - w.start);
         if (t <= cumLen + wLen) {
-          const localT = wLen > 0 ? (t - cumLen) / wLen : 0;
-          const start  = Math.round(w.start + localT * Math.max(0, wLen - avgDur));
+          const localT    = wLen > 0 ? (t - cumLen) / wLen : 0;
+          const rawStart  = Math.round(w.start + localT * Math.max(0, wLen - avgDur));
+          const start     = Math.max(w.start, Math.min(w.end - 15, rawStart));
+          // Cap duration so the meeting cannot bleed past the window end
+          // (which would overwrite the reserved focus zone).
+          const maxDur    = Math.max(15, w.end - start);
           return {
             type:     'meeting',
-            start:    Math.max(w.start, Math.min(w.end - 15, start)),
-            duration: Math.max(15, Math.min(120, Math.round(avgDur * (0.75 + rng() * 0.5)))),
+            start,
+            duration: Math.max(15, Math.min(maxDur, Math.round(avgDur * (0.75 + rng() * 0.5)))),
           };
         }
         cumLen += wLen;
@@ -120,7 +124,17 @@
       const p = meetings[i - 1];
       meetings[i].start = Math.max(meetings[i].start, p.start + p.duration + 15);
     }
-    const validMeetings = meetings.filter(m => m.start + m.duration <= aEnd);
+    // Drop meetings that overflow the day or that bleed into the focus zone
+    // (can happen after overlap-push during resolution).
+    const validMeetings = meetings.filter(m => {
+      if (m.start + m.duration > aEnd) return false;
+      if (hasFocus) {
+        const overlapsFocus = m.start < focusEnd + focusBuf &&
+                              m.start + m.duration > focusStart - focusBuf;
+        if (overlapsFocus) return false;
+      }
+      return true;
+    });
 
     // ── Email & chat interruptions ─────────────────────────────────────────────
     const occupied = [
