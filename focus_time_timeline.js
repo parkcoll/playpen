@@ -380,29 +380,69 @@
       const titleEl = element.querySelector('.ftl-title');
       if (titleEl) titleEl.textContent = config.chart_title || 'But in reality, interruptions occur';
 
-      // Use only measure_like to avoid dimension field index offset.
-      const fields = queryResponse.fields.measure_like || [];
-      const row    = (data && data[0]) || {};
-      const gv     = i => fields[i] ? (parseFloat(row[fields[i].name]?.value) || 0) : 0;
+      // ── Extract metric values ─────────────────────────────────────────────
+      // Support two data layouts:
+      //   A) Multiple measure columns, one row (each column = a metric)
+      //   B) Key-value rows: dimension = metric key, measure = value (e.g. p50)
+      const dims     = queryResponse.fields.dimension_like || [];
+      const measures = queryResponse.fields.measure_like   || [];
 
-      // Log every field so we can verify mapping in DevTools console.
-      console.log('[FTL v9] measure fields (' + fields.length + '):',
-        fields.map((f, i) => `[${i}] ${f.name} = ${row[f.name]?.value}`).join(' | '));
+      console.log('[FTL v10] schema — dims:', dims.map(d => d.name),
+                  'measures:', measures.map(m => m.name), 'rows:', data.length);
 
-      // Find focus field by name pattern – robust to ordering changes.
-      const focusIdx = fields.findIndex(f => /focus/i.test(f.name));
-      const focusVal = focusIdx >= 0 ? gv(focusIdx) : gv(4);
+      let meetingsAttended = 0, meetingHours = 0, emailsSent = 0,
+          chatSent = 0, focusHours = 0;
+
+      if (measures.length >= 4) {
+        // ── Layout A: each measure is a distinct metric ──────────────────
+        const row = data[0] || {};
+        const gv  = i => parseFloat(row[measures[i]?.name]?.value) || 0;
+        meetingsAttended = gv(0);
+        meetingHours     = gv(1);
+        emailsSent       = gv(2);
+        chatSent         = gv(3);
+        const fi = measures.findIndex(f => /focus/i.test(f.name));
+        focusHours = fi >= 0 ? gv(fi) : gv(4);
+      } else {
+        // ── Layout B: dimension = metric key, measure = value (p50) ──────
+        const dimName = dims[0]?.name;
+        const valName = measures[0]?.name;
+        if (dimName && valName) {
+          const lookup = {};
+          for (const row of data) {
+            const key = String(row[dimName]?.value || '').toLowerCase();
+            const val = parseFloat(row[valName]?.value);
+            if (key && !isNaN(val)) lookup[key] = val;
+          }
+          console.log('[FTL v10] metric lookup:', JSON.stringify(lookup));
+
+          const find = (...patterns) => {
+            for (const [k, v] of Object.entries(lookup)) {
+              if (patterns.some(p => k.includes(p))) return v;
+            }
+            return 0;
+          };
+          meetingsAttended = find('attended', 'events_attended', 'events:attended');
+          meetingHours     = find('hours_meeting', 'hours:meeting', 'meeting_hours',
+                                  'hours:meetings', 'calendar_hours');
+          emailsSent       = find('emails_sent', 'emails:sent', 'email_sent', 'email');
+          chatSent         = find('message_sent', 'messages_sent', 'message:sent', 'slack');
+          focusHours       = find('focus');
+        }
+      }
+
+      console.log('[FTL v10] raw:', { meetingsAttended, meetingHours, emailsSent, chatSent, focusHours });
 
       const inputs = {
-        numMeetings:     Math.max(1, Math.round((gv(0) / 5) || 4)),
-        meetingMinutes:  ((gv(1) / 5) || 2) * 60,   // weekly hours → daily → minutes
-        numEmails:       (gv(2) / 5) || 10,
-        numChat:         (gv(3) / 5) || 20,
-        focusHoursDaily: focusVal > 0 ? focusVal : null,
+        numMeetings:     Math.max(1, Math.round((meetingsAttended / 5) || 4)),
+        meetingMinutes:  ((meetingHours / 5) || 2) * 60,   // weekly hours → daily → minutes
+        numEmails:       (emailsSent / 5) || 10,
+        numChat:         (chatSent / 5) || 20,
+        focusHoursDaily: focusHours > 0 ? focusHours : null,
         workStart:       Math.round((config.work_start_hour || 8)  * 60),
         workEnd:         Math.round((config.work_end_hour   || 18) * 60),
       };
-      console.log('[FTL v9] inputs:', JSON.stringify(inputs));
+      console.log('[FTL v10] inputs:', JSON.stringify(inputs));
       const renderOpts = {
         rampMin:  config.ramp_minutes              || 12,
         focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
