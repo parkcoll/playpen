@@ -385,7 +385,7 @@
   </div>
   <div class="ftl-legend">
     <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div>Focus Time</div>
-    <div class="ftl-li"><div class="ftl-sw" style="background:#A8C7FA"></div>Fragmented</div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:#F28B82"></div>Fragmented</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#34A853"></div>Email</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#FBBC04"></div>Chat</div>
     <div class="ftl-li"><div class="ftl-sw" style="background:#EA4335"></div>Meetings</div>
@@ -541,11 +541,10 @@
 
       // ── Layout constants ───────────────────────────────────────────────────
       // The bar sits at ~62% of the chart height from the top; the area
-      // above it is used for the focus plateaus and interruption humps.
+      // above it is used for the focus plateaus and fragmented arches.
       const barY   = Math.round(H * 0.62);
       const barH   = Math.max(20, Math.round(H * 0.15));
       const maxFH  = Math.round(barY * 0.80); // max height of focus plateau
-      const maxIH  = Math.round(barY * 0.62); // max height of interruption hump
 
       // ── Coordinate helpers ─────────────────────────────────────────────────
       const tx     = t   => ML + ((t - workStart) / wDur) * cW; // time → x pixel
@@ -554,7 +553,7 @@
       // ── Colors ────────────────────────────────────────────────────────────
       const COLOR = {
         focus:      '#4285F4',
-        fragmented: '#A8C7FA', // lighter blue – uninterrupted but < 2 h
+        fragmented: '#F28B82', // light red – uninterrupted but < 2 h (lost focus)
         meeting:    '#EA4335',
         email:      '#34A853',
         chat:       '#FBBC04',
@@ -590,30 +589,8 @@
       // Subtle bar border
       p.push(`<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1" rx="${rx}"/>`);
 
-      // ── Pre-compute shaped blocks and build region list for ramp limiting ─
-      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
-      const fragBlocks0 = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
-      const allRegions  = [
-        ...events.map(ev => ({ start: ev.start, end: ev.start + ev.duration })),
-        ...focusBlocks.map(b => ({ start: b.start, end: b.end })),
-        ...fragBlocks0.map(b => ({ start: b.start, end: b.end })),
-      ].sort((a, b) => a.start - b.start);
-
-      // Returns the gap (in minutes) before/after a time range, considering all neighbours.
-      const getGaps = (s, e) => {
-        let prevEnd = workStart, nextStart = workEnd;
-        for (const r of allRegions) {
-          if (r.start === s && r.end === e) continue; // skip self
-          if (r.end <= s && r.end > prevEnd) prevEnd = r.end;
-          if (r.start >= e && r.start < nextStart) nextStart = r.start;
-        }
-        return { before: s - prevEnd, after: nextStart - e };
-      };
-
-      // Convert a gap in minutes to a capped ramp in pixels (≤45% of gap, ≤rampPx).
-      const gapRamp = gapMin => Math.max(0, Math.min(rampPx, ((gapMin / wDur) * cW) * 0.45));
-
       // ── Focus plateau shapes (blue, above bar) ────────────────────────────
+      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
       focusBlocks.forEach(block => {
         const dur = block.end - block.start;
         const fH  = Math.min(maxFH, maxFH * (0.40 + 0.60 * Math.min(1, dur / 240)));
@@ -624,9 +601,10 @@
         p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"/>`);
       });
 
-      // ── Fragmented block arches (light blue, shorter, above bar) ──────────
-      // Gaps ≥ 15 min and < focusThr – uninterrupted but too short for "deep focus".
-      fragBlocks0.forEach(block => {
+      // ── Fragmented block arches (light red, shorter, above bar) ───────────
+      // Gaps ≥ 15 min and < focusThr – uninterrupted but too short for deep focus.
+      const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+      fragBlocks.forEach(block => {
         const dur = block.end - block.start;
         // Shorter arch: ~30-50% of maxFH, scaling with duration.
         const fH  = Math.min(maxFH * 0.50, maxFH * (0.15 + 0.35 * Math.min(1, dur / 120)));
@@ -634,32 +612,10 @@
         const x3  = tx(block.end);
         const rp  = Math.min(rampPx, (x3 - x0) * 0.30);
         const d   = plateauPath(x0, x3, barY, barY - fH, rp);
-        p.push(`<path d="${d}" fill="rgba(168,199,250,0.30)" stroke="none"/>`);
+        p.push(`<path d="${d}" fill="rgba(234,67,53,0.18)" stroke="none"/>`);
       });
 
-      // ── Interruption humps (above bar, ramps limited to available gap) ────
-      events.forEach(ev => {
-        const nd  = ev.duration / 60;
-        let iH;
-        if (ev.type === 'meeting') {
-          iH = maxIH * Math.min(1, 0.28 + 0.72 * Math.sqrt(nd));
-        } else if (ev.type === 'email') {
-          iH = maxIH * 0.32;
-        } else {
-          iH = maxIH * 0.24;
-        }
-        iH = Math.max(maxIH * 0.12, iH);
-
-        const evEnd = ev.start + ev.duration;
-        const gaps  = getGaps(ev.start, evEnd);
-        const rL    = gapRamp(gaps.before);
-        const rR    = gapRamp(gaps.after);
-
-        const x1 = tx(ev.start);
-        const x2 = tx(evEnd);
-        const d  = humpPath(x1 - rL, x1, x2, x2 + rR, barY, barY - iH);
-        p.push(`<path d="${d}" fill="rgba(234,67,53,0.20)" stroke="none"/>`);
-      });
+      // Interruptions (meetings, email, chat) appear only in the bar – no shapes above.
 
       // ── Hour-marker axis ──────────────────────────────────────────────────
       const h0 = Math.ceil(workStart  / 60);
