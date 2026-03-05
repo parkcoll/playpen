@@ -347,22 +347,23 @@
     // ── create ───────────────────────────────────────────────────────────────
     create(element, config) {
       element.style.background = '#ffffff';
+      element.style.overflow   = 'hidden';
       element.innerHTML = `
 <style>
   .ftl{display:flex;flex-direction:column;width:100%;height:100%;
-       padding:20px 28px 10px;box-sizing:border-box;
+       padding:16px 28px 8px;box-sizing:border-box;overflow:hidden;
        font-family:"Google Sans",Roboto,Arial,sans-serif}
-  .ftl-title{font-size:22px;font-weight:400;color:#3c4043;margin-bottom:10px}
-  .ftl-chart{flex:1;min-height:0;position:relative}
-  .ftl-legend{display:flex;gap:24px;justify-content:center;
-              margin-top:10px;font-size:13px;color:#5f6368}
+  .ftl-title{font-size:20px;font-weight:400;color:#3c4043;margin-bottom:8px;flex-shrink:0}
+  .ftl-chart{flex:1;min-height:0;position:relative;overflow:hidden}
+  .ftl-legend{display:flex;gap:24px;justify-content:center;flex-shrink:0;
+              margin-top:8px;font-size:13px;color:#5f6368}
   .ftl-li{display:flex;align-items:center;gap:6px}
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
 </style>
 <div class="ftl">
   <div class="ftl-title">But in reality, interruptions occur</div>
   <div class="ftl-chart">
-    <svg id="ftl-svg" style="display:block;overflow:visible"></svg>
+    <svg id="ftl-svg" style="display:block;overflow:hidden"></svg>
   </div>
   <div class="ftl-legend">
     <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div>Focus Time</div>
@@ -399,6 +400,7 @@
         workStart:       Math.round((config.work_start_hour      || 8)  * 60),
         workEnd:         Math.round((config.work_end_hour        || 18) * 60),
       };
+      console.log('[FTL v8] inputs:', JSON.stringify(inputs));
       const renderOpts = {
         rampMin:  config.ramp_minutes              || 12,
         focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
@@ -427,11 +429,12 @@
 
       // Use the root element's dimensions directly — flex child clientHeight
       // is unreliable in Looker's sandboxed iframe context.
+      // Subtract ~130px for: title (36px) + legend (28px) + padding (16+8px) + margins (16px) + axis labels (26px).
       const W = Math.max(300, element.clientWidth  || 700);
-      const H = Math.max(120, (element.clientHeight || 280) - 80); // subtract title + legend + padding
+      const H = Math.max(100, (element.clientHeight || 280) - 130);
 
       svg.setAttribute('width',  W);
-      svg.setAttribute('height', H + 32);
+      svg.setAttribute('height', H);
 
       // Chart margins
       const ML   = 12;  // left  (no y-axis labels needed)
