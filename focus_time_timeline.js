@@ -298,6 +298,26 @@
   }
 
   /**
+   * Smooth arch path – always rounded, no flat top.
+   * Used for fragmented blocks that shouldn't reach a plateau.
+   *
+   * @param {number} x0 – left edge
+   * @param {number} x3 – right edge
+   * @param {number} y0 – baseline y (top of bar)
+   * @param {number} y1 – peak y (< y0)
+   */
+  function archPath(x0, x3, y0, y1) {
+    const w   = x3 - x0;
+    const cx  = w * 0.30; // bezier handle offset for a smooth bell
+    const mx  = (x0 + x3) / 2;
+    return (
+      `M${f(x0)},${f(y0)} ` +
+      `C${f(x0 + cx)},${f(y0)} ${f(mx - cx * 0.3)},${f(y1)} ${f(mx)},${f(y1)} ` +
+      `C${f(mx + cx * 0.3)},${f(y1)} ${f(x3 - cx)},${f(y0)} ${f(x3)},${f(y0)} Z`
+    );
+  }
+
+  /**
    * Smooth mountain / hump path for interruption events.
    *
    * The hump spans from x0 (start of ramp-down) through the event body
@@ -369,9 +389,8 @@
       element.innerHTML = `
 <style>
   .ftl{display:flex;flex-direction:column;width:100%;height:100%;
-       padding:16px 28px 8px;box-sizing:border-box;overflow:hidden;
+       padding:10px 8px 8px;box-sizing:border-box;overflow:hidden;
        font-family:"Google Sans",Roboto,Arial,sans-serif}
-  .ftl-title{font-size:20px;font-weight:400;color:#3c4043;margin-bottom:8px;flex-shrink:0}
   .ftl-chart{flex:1;min-height:0;position:relative;overflow:hidden}
   .ftl-legend{display:flex;gap:24px;justify-content:center;flex-shrink:0;
               margin-top:8px;font-size:13px;color:#5f6368}
@@ -379,7 +398,6 @@
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
 </style>
 <div class="ftl">
-  <div class="ftl-title">But in reality, interruptions occur</div>
   <div class="ftl-chart">
     <svg id="ftl-svg" style="display:block;overflow:hidden"></svg>
   </div>
@@ -394,10 +412,6 @@
 
     // ── updateAsync ──────────────────────────────────────────────────────────
     updateAsync(data, element, config, queryResponse, details, done) {
-      // Update title
-      const titleEl = element.querySelector('.ftl-title');
-      if (titleEl) titleEl.textContent = config.chart_title || 'But in reality, interruptions occur';
-
       // ── Extract metric values ─────────────────────────────────────────────
       // Supports three Looker data layouts:
       //   A) Multiple measure columns, one row (each column = a metric)
@@ -525,18 +539,21 @@
 
       // Use the root element's dimensions directly — flex child clientHeight
       // is unreliable in Looker's sandboxed iframe context.
-      // Subtract ~130px for: title (36px) + legend (28px) + padding (16+8px) + margins (16px) + axis labels (26px).
+      // Subtract ~90px for: legend (28px) + padding (16+8px) + margins + axis labels (26px).
       const W = Math.max(300, element.clientWidth  || 700);
-      const H = Math.max(100, (element.clientHeight || 280) - 130);
+      const H = Math.max(100, (element.clientHeight || 280) - 90);
 
       svg.setAttribute('width',  W);
       svg.setAttribute('height', H);
 
-      // Chart margins
-      const ML   = 12;  // left  (no y-axis labels needed)
-      const MR   = 12;  // right
+      // Chart margins – generous to avoid clipping at edges
+      const ML   = 36;
+      const MR   = 36;
       const cW   = W - ML - MR;
       const wDur = workEnd - workStart;
+
+      // Gray buffer width (non-work time at day edges)
+      const grayBuf = Math.round(cW * 0.03); // ~3% of chart width each side
 
       // ── Layout constants ───────────────────────────────────────────────────
       // The bar sits at ~62% of the chart height from the top; the area
@@ -564,17 +581,21 @@
       const clipId = 'ftl-bar-clip';
       const rx     = Math.round(barH * 0.45); // border-radius for bar ends
 
+      // Full bar width including gray buffers
+      const fullBarX = ML - grayBuf;
+      const fullBarW = cW + grayBuf * 2;
+
       // Clip path so coloured segments inherit the bar's rounded corners.
       p.push(
         `<defs>` +
         `<clipPath id="${clipId}">` +
-        `<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" rx="${rx}"/>` +
+        `<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" rx="${rx}"/>` +
         `</clipPath>` +
         `</defs>`
       );
 
-      // Gray background bar
-      p.push(`<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" fill="${COLOR.bg}" rx="${rx}"/>`);
+      // Gray background bar (full width including buffer zones)
+      p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="${COLOR.bg}" rx="${rx}"/>`);
 
       // Coloured timeline segments (clipped to rounded bar)
       p.push(`<g clip-path="url(#${clipId})">`);
@@ -586,7 +607,7 @@
       p.push('</g>');
 
       // Subtle bar border
-      p.push(`<rect x="${ML}" y="${barY}" width="${cW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1" rx="${rx}"/>`);
+      p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="none" stroke="rgba(0,0,0,0.07)" stroke-width="1" rx="${rx}"/>`);
 
       // ── Focus plateau shapes (blue, above bar) ────────────────────────────
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
@@ -600,9 +621,9 @@
         p.push(`<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none"/>`);
       });
 
-      // ── Fragmented block arches (light red above bar, height → focus as dur → 2 h)
-      // Gaps ≥ 15 min and < focusThr. Height scales linearly so a 1h50m block
-      // is almost as tall as a full focus plateau.
+      // ── Fragmented block arches (light red, rounded, above bar) ────────────
+      // Gaps ≥ 15 min and < focusThr. Height scales so longer blocks approach
+      // focus-plateau height. Shape is always a smooth arch (no flat top).
       const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
       fragBlocks.forEach(block => {
         const dur  = block.end - block.start;
@@ -610,8 +631,7 @@
         const fH   = maxFH * (0.15 + 0.80 * pct); // 15% → 95% of full plateau height
         const x0   = tx(block.start);
         const x3   = tx(block.end);
-        const rp   = Math.min(rampPx, (x3 - x0) * 0.25);
-        const d    = plateauPath(x0, x3, barY, barY - fH, rp);
+        const d    = archPath(x0, x3, barY, barY - fH);
         p.push(`<path d="${d}" fill="rgba(234,67,53,0.22)" stroke="none"/>`);
       });
 
