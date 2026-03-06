@@ -427,10 +427,10 @@
   </div>
   <div class="ftl-stats" id="ftl-stats"></div>
   <div class="ftl-legend">
-    <div class="ftl-li"><div class="ftl-sw" style="background:#4285F4"></div><span>Focus Time</span></div>
-    <div class="ftl-li ftl-toggle" data-type="email"><div class="ftl-sw" style="background:#34A853"></div><span>Email</span></div>
-    <div class="ftl-li ftl-toggle" data-type="chat"><div class="ftl-sw" style="background:#FBBC04"></div><span>Chat</span></div>
-    <div class="ftl-li ftl-toggle" data-type="meeting"><div class="ftl-sw" style="background:#EA4335"></div><span>Meetings</span></div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:#3B82F6"></div><span>Focus Time</span></div>
+    <div class="ftl-li ftl-toggle" data-type="email"><div class="ftl-sw" style="background:#10B981"></div><span>Email</span></div>
+    <div class="ftl-li ftl-toggle" data-type="chat"><div class="ftl-sw" style="background:#F59E0B"></div><span>Chat</span></div>
+    <div class="ftl-li ftl-toggle" data-type="meeting"><div class="ftl-sw" style="background:#EF4444"></div><span>Meetings</span></div>
   </div>
 </div>`;
     },
@@ -629,11 +629,11 @@
 
       // ── Colors ────────────────────────────────────────────────────────────
       const COLOR = {
-        focus:      '#4285F4',
-        fragmented: '#4285F4', // same blue in the bar – all uninterrupted time is "focus"
-        meeting:    '#EA4335',
-        email:      '#34A853',
-        chat:       '#FBBC04',
+        focus:      '#3B82F6',
+        fragmented: '#3B82F6', // same blue in the bar – all uninterrupted time is "focus"
+        meeting:    '#EF4444',
+        email:      '#10B981',
+        chat:       '#F59E0B',
         bg:         '#E8EAED',
       };
 
@@ -704,7 +704,7 @@
           const rp  = Math.min(rampPx, (x3 - x0) * 0.25);
           const d   = plateauPath(x0, x3, barY, barY - fH, rp);
           p.push(
-            `<path d="${d}" fill="rgba(66,133,244,0.26)" stroke="none" ` +
+            `<path d="${d}" fill="rgba(59,130,246,0.26)" stroke="none" ` +
             `class="ftl-shape" style="animation-delay:${delay}s">` +
             `<title>${TIP.focus}</title></path>`
           );
@@ -717,7 +717,7 @@
           const x3  = tx(block.end);
           const d   = archPath(x0, x3, barY, barY - fH);
           p.push(
-            `<path d="${d}" fill="rgba(234,67,53,0.22)" stroke="none" ` +
+            `<path d="${d}" fill="rgba(239,68,68,0.22)" stroke="none" ` +
             `class="ftl-shape" style="animation-delay:${delay}s">` +
             `<title>${TIP.fragmented}</title></path>`
           );
