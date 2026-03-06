@@ -384,12 +384,6 @@
         type: 'number', label: 'Focus Ramp Time (minutes)', default: 12,
         section: 'Schedule', order: 4,
       },
-      chart_title: {
-        type: 'string', label: 'Chart Title',
-        default: 'But in reality, interruptions occur',
-        section: 'Display', order: 1,
-      },
-
       // ── Metrics source selectors ──────────────────────────────────────────
       // When multiple tools are connected (e.g. both Slack and Teams), pick
       // which one's keys to use.  'auto' tries all known patterns in order.
