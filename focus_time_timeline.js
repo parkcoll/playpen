@@ -604,8 +604,8 @@
         meetingMinutes:       ((meetingHours / 5) || 2) * 60,   // weekly hours → daily → minutes
         numEmails:            (emailsSent / 5) || 10,
         numChat:              (chatSent / 5) || 20,
-        focusHoursDaily:      focusHours > 0 ? focusHours : null,
-        fragmentedHoursDaily: fragmentedHours > 0 ? fragmentedHours : null, // daily, < 2 h blocks
+        focusHoursDaily:      focusHours > 0 ? focusHours / 5 : null,      // weekly → daily
+        fragmentedHoursDaily: fragmentedHours > 0 ? fragmentedHours / 5 : null, // weekly → daily
         workStart:            Math.round((config.work_start_hour || 8)  * 60),
         workEnd:              Math.round((config.work_end_hour   || 18) * 60),
       };
