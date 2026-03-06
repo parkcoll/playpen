@@ -386,6 +386,42 @@
         default: 'But in reality, interruptions occur',
         section: 'Display', order: 1,
       },
+
+      // ── Metrics source selectors ──────────────────────────────────────────
+      // When multiple tools are connected (e.g. both Slack and Teams), pick
+      // which one's keys to use.  'auto' tries all known patterns in order.
+      chat_source: {
+        type: 'string', label: 'Chat / Messaging Tool',
+        display: 'select',
+        values: [
+          { 'Auto-detect': 'auto' },
+          { 'Slack':             'slack'       },
+          { 'Microsoft Teams':   'msft:teams'  },
+          { 'Google Chat':       'google:chat' },
+        ],
+        section: 'Metrics', order: 1, default: 'auto',
+      },
+      email_source: {
+        type: 'string', label: 'Email Tool',
+        display: 'select',
+        values: [
+          { 'Auto-detect': 'auto' },
+          { 'Gmail':                 'gmail' },
+          { 'Outlook / Microsoft 365': 'msft' },
+        ],
+        section: 'Metrics', order: 2, default: 'auto',
+      },
+      meeting_source: {
+        type: 'string', label: 'Calendar / Meetings Tool',
+        display: 'select',
+        values: [
+          { 'Auto-detect': 'auto' },
+          { 'Google Calendar':        'google:calendar'  },
+          { 'Outlook Calendar':       'msft:calendar'    },
+          { 'Microsoft Teams Calls':  'msft:teams:calls' },
+        ],
+        section: 'Metrics', order: 3, default: 'auto',
+      },
     },
 
     // ── create ───────────────────────────────────────────────────────────────
@@ -464,16 +500,54 @@
         return 0;
       };
 
+      // ── Per-tool metric key patterns ───────────────────────────────────────
+      // Each entry is an array of substrings tried in order against the lookup keys.
+      // 'auto' covers broad patterns that work across tools; specific entries are
+      // more precise and avoid false matches when multiple tools are connected.
+      const PATTERNS = {
+        chat: {
+          auto:          ['message_sent', 'messages_sent', 'message:sent', 'slack'],
+          slack:         ['slack:message:sent', 'slack:message', 'slack'],
+          'msft:teams':  ['msft:teams:v1:message:sent', 'msft:teams:message:sent',
+                          'msft:teams:v1:dm:chats:sent', 'msft:teams:v1:group:chats:sent',
+                          'msft:teams:message'],
+          'google:chat': ['google:chat:message:sent', 'google:chat:message', 'google:chat'],
+        },
+        email: {
+          auto:   ['emails_sent', 'emails:sent', 'email_sent', 'email'],
+          gmail:  ['gmail:emails:sent', 'gmail:email', 'gmail'],
+          msft:   ['msft:outlook:emails:sent', 'msft:email', 'outlook:email', 'msft:emails'],
+        },
+        meetingsAttended: {
+          auto:               ['attended', 'events_attended', 'events:attended'],
+          'google:calendar':  ['google:calendar:events:attended', 'gcal:events:attended'],
+          'msft:calendar':    ['msft:calendar:events:attended', 'msft:calendar:events'],
+          'msft:teams:calls': ['msft:teams:v1:calls:attended', 'msft:teams:calls:attended'],
+        },
+        meetingHours: {
+          auto:               ['hours_meeting', 'hours:meeting', 'hours:meetings',
+                               'meeting_hours', 'calendar_hours'],
+          'google:calendar':  ['google:calendar:hours:meeting', 'google:calendar:hours'],
+          'msft:calendar':    ['msft:calendar:hours:meeting', 'msft:calendar:hours'],
+          'msft:teams:calls': ['msft:teams:v1:calls:sum:hours', 'msft:teams:v1:calls:hours',
+                               'msft:teams:minutes:week'],
+        },
+      };
+
+      const chatSrc = config.chat_source    || 'auto';
+      const emlSrc  = config.email_source   || 'auto';
+      const metSrc  = config.meeting_source || 'auto';
+
       // Shared helper to extract all metrics from a lookup object.
       const extractMetrics = (lookup) => {
         meetingsAttended = findInLookup(lookup,
-          ['attended', 'events_attended', 'events:attended']);
+          PATTERNS.meetingsAttended[metSrc] || PATTERNS.meetingsAttended.auto);
         meetingHours = findInLookup(lookup,
-          ['hours_meeting', 'hours:meeting', 'hours:meetings', 'meeting_hours', 'calendar_hours']);
+          PATTERNS.meetingHours[metSrc]     || PATTERNS.meetingHours.auto);
         emailsSent = findInLookup(lookup,
-          ['emails_sent', 'emails:sent', 'email_sent', 'email']);
+          PATTERNS.email[emlSrc]            || PATTERNS.email.auto);
         chatSent = findInLookup(lookup,
-          ['message_sent', 'messages_sent', 'message:sent', 'slack']);
+          PATTERNS.chat[chatSrc]            || PATTERNS.chat.auto);
         // 'focus' appears in both focus and fragmented keys — exclude 'fragment' for focus.
         focusHours      = findInLookup(lookup, ['focus'], ['fragment']);
         fragmentedHours = findInLookup(lookup, ['fragment']);
