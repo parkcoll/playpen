@@ -1035,9 +1035,9 @@
         const delay = (0.05 + idx * 0.04).toFixed(2);
 
         if (block.kind === 'focus') {
-          const dur = block.end - block.start;
-          // Height scales from 40 % to 100 % of maxFH as duration goes from 0 to 4 h.
-          const fH  = Math.min(maxFH, maxFH * (0.40 + 0.60 * Math.min(1, dur / 240)));
+          // All focus plateaus are the same height — every block qualifies equally
+          // (≥ focusThr uninterrupted), so height should not vary by duration.
+          const fH  = maxFH;
           const x0  = tx(block.start);
           const x3  = tx(block.end);
           const rp  = Math.min(rampPx, (x3 - x0) * 0.25);  // ramp can't exceed 25% of block width
