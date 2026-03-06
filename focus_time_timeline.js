@@ -139,15 +139,18 @@
     // ── Email & chat interruptions ─────────────────────────────────────────────
     const occupied = [
       ...validMeetings.map(m => ({ s: m.start - 15, e: m.start + m.duration + 15 })),
-      // Block the focus window so chat/email don't land inside it.
-      ...(hasFocus ? [{ s: focusStart - focusBuf, e: focusEnd + focusBuf }] : []),
+      // Focus window only blocks meeting placement — chat/email are intentionally
+      // allowed inside it, since they represent the real-world interruptions that
+      // fragment focus time (that's the story this chart is telling).
     ];
 
     const tryPlace = (type, duration, buffer) => {
       buffer = buffer ?? 10;
       for (let attempt = 0; attempt < 60; attempt++) {
         const t = Math.round(aStart + rng() * (aLen - duration));
-        if (hasFocus && t + duration > focusStart - focusBuf && t < focusEnd + focusBuf) continue;
+        // Only scheduled meetings respect the focus block boundary.
+        if (type === 'meeting' && hasFocus &&
+            t + duration > focusStart - focusBuf && t < focusEnd + focusBuf) continue;
         if (!occupied.some(o => t < o.e && t + duration > o.s)) {
           occupied.push({ s: t - buffer, e: t + duration + buffer });
           return { type, start: t, duration };
