@@ -569,6 +569,7 @@
           { 'Google Calendar':        'google:calendar'  },
           { 'Outlook Calendar':       'msft:calendar'    },
           { 'Microsoft Teams Calls':  'msft:teams:calls' },
+          { 'Zoom':                   'zoom'             },
         ],
         section: 'Metrics', order: 3, default: 'auto',
       },
@@ -707,31 +708,47 @@
       // false matches when, for example, both Slack and Teams are connected.
       const PATTERNS = {
         chat: {
-          auto:          ['message_sent', 'messages_sent', 'message:sent', 'slack'],
-          slack:         ['slack:message:sent', 'slack:message', 'slack'],
-          'msft:teams':  ['msft:teams:v1:message:sent', 'msft:teams:message:sent',
-                          'msft:teams:v1:dm:chats:sent', 'msft:teams:v1:group:chats:sent',
-                          'msft:teams:message'],
-          'google:chat': ['google:chat:message:sent', 'google:chat:message', 'google:chat'],
+          auto:          ['slack:message:sent', 'msft:teams:v1:message:sent',
+                          'google-chat:message:sent', 'gmail:chats:sent',
+                          'message:sent', 'message_sent'],
+          slack:         ['slack:message:sent', 'slack:v1:message:sent:count',
+                          'slack:message', 'slack'],
+          'msft:teams':  ['msft:teams:v1:message:sent:count',
+                          'msft:teams:v1:dm:chats:sent:count',
+                          'msft:teams:v1:group:chats:sent:count',
+                          'msft:teams:v1:message:sent', 'msft:teams'],
+          'google:chat': ['google-chat:message:sent', 'google-chat:message', 'google-chat'],
         },
         email: {
-          auto:  ['emails_sent', 'emails:sent', 'email_sent', 'email'],
+          auto:  ['outlook-mail:emails:sent', 'gmail:emails:sent',
+                  'email:outgoing:total', 'emails:sent', 'emails_sent'],
           gmail: ['gmail:emails:sent', 'gmail:email', 'gmail'],
-          msft:  ['msft:outlook:emails:sent', 'msft:email', 'outlook:email', 'msft:emails'],
+          msft:  ['outlook-mail:emails:sent', 'outlook-mail:email', 'outlook-mail'],
         },
         meetingsAttended: {
-          auto:               ['attended', 'events_attended', 'events:attended'],
-          'google:calendar':  ['google:calendar:events:attended', 'gcal:events:attended'],
-          'msft:calendar':    ['msft:calendar:events:attended', 'msft:calendar:events'],
-          'msft:teams:calls': ['msft:teams:v1:calls:attended', 'msft:teams:calls:attended'],
+          auto:               ['calendar:events:attended', 'gcal:events:attended',
+                               'outlook-cal:events:attended', 'zoom:v3:events:attended',
+                               'events:attended', 'events_attended'],
+          'google:calendar':  ['gcal:events:attended', 'calendar:events:attended'],
+          'msft:calendar':    ['outlook-cal:events:attended'],
+          'msft:teams:calls': ['msft:teams:v1:calls:attended:scheduled:count',
+                               'msft:teams:v1:calls:attended:unscheduled:count',
+                               'msft:teams:v1:calls:attended'],
+          zoom:               ['zoom:v3:events:attended', 'zoom:events:attended'],
         },
         meetingHours: {
-          auto:               ['hours_meeting', 'hours:meeting', 'hours:meetings',
-                               'meeting_hours', 'calendar_hours'],
-          'google:calendar':  ['google:calendar:hours:meeting', 'google:calendar:hours'],
-          'msft:calendar':    ['msft:calendar:hours:meeting', 'msft:calendar:hours'],
-          'msft:teams:calls': ['msft:teams:v1:calls:sum:hours', 'msft:teams:v1:calls:hours',
-                               'msft:teams:minutes:week'],
+          auto:               ['calendar:events:hours:meetings',
+                               'gcal:events:hours:spent:meetings',
+                               'outlook-cal:events:hours:spent:meetings',
+                               'zoom:v3:events:hours:spent:meetings',
+                               'hours:meetings', 'meeting_hours'],
+          'google:calendar':  ['gcal:events:hours:spent:meetings',
+                               'calendar:events:hours:meetings'],
+          'msft:calendar':    ['outlook-cal:events:hours:spent:meetings'],
+          'msft:teams:calls': ['msft:teams:v1:calls:sum:hours:spent:meetings',
+                               'msft:teams:v1:calls:scheduled:sum:hours:spent:meetings'],
+          zoom:               ['zoom:v3:events:hours:spent:meetings',
+                               'zoom:events:hours:spent:meetings'],
         },
       };
 
@@ -753,10 +770,13 @@
           PATTERNS.email[emlSrc]            || PATTERNS.email.auto);
         chatSent = findInLookup(lookup,
           PATTERNS.chat[chatSrc]            || PATTERNS.chat.auto);
-        // Both focus and fragmented keys contain the word "focus" so we
-        // exclude keys containing "fragment" when searching for focus hours.
-        focusHours      = findInLookup(lookup, ['focus'], ['fragment']);
-        fragmentedHours = findInLookup(lookup, ['fragment']);
+        // Focus and fragmented keys both contain "focus" so we search for the
+        // most specific patterns first and exclude "fragmented" from the focus search.
+        focusHours      = findInLookup(lookup,
+          ['worklytics:hours:in:focus', 'hours:in:focus', 'focus:blocks', 'focus'],
+          ['fragment']);
+        fragmentedHours = findInLookup(lookup,
+          ['worklytics:hours:fragmented', 'hours:fragmented', 'fragmented']);
       };
 
       if (measures.length >= 4) {
