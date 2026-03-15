@@ -202,11 +202,9 @@
 
     // ── Email & chat interruptions ─────────────────────────────────────────────
     // Track occupied time ranges so email/chat clusters don't overlap each other
-    // or land on top of meetings. The focus block is intentionally NOT in this
-    // list — email and chat are allowed within the focus zone because they are
-    // the real-world interruptions that fragment focus time. Placing them there
-    // tells a more accurate story (and prevents them from being crowded out when
-    // the focus block is large).
+    // or land on top of meetings. The focus block itself is kept clean — all
+    // event types are restricted from entering it so the plateau is visually
+    // accurate (the Worklytics focus metric measures genuinely uninterrupted time).
     const occupied = [
       ...validMeetings.map(m => ({ s: m.start - 15, e: m.start + m.duration + 15 })),
     ];
@@ -223,9 +221,12 @@
       buffer = buffer ?? 10;
       for (let attempt = 0; attempt < 60; attempt++) {
         const t = Math.round(aStart + rng() * (aLen - duration));
-        // Meetings must stay outside the reserved focus block so they don't
-        // fragment it. Email and chat have no such restriction.
-        if (type === 'meeting' && hasFocus &&
+        // All event types must stay outside the reserved focus block so the
+        // focus plateau is visually clean (no interruptions shown inside it).
+        // If an email or chat cluster can't find a slot outside, tryPlace
+        // returns null and it is silently dropped — fewer events is preferable
+        // to showing interruptions inside a block labelled "focus time".
+        if (hasFocus &&
             t + duration > focusStart - focusBuf && t < focusEnd + focusBuf) continue;
         // Reject positions that overlap any already-occupied range.
         if (!occupied.some(o => t < o.e && t + duration > o.s)) {
