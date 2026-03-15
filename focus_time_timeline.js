@@ -1150,6 +1150,7 @@
       // We also truncate / remove any getFragmentedBlocks arches that straddle the
       // buffer-zone boundaries to avoid double-drawing overlapping shapes.
       if (hasFocus && focusStart != null) {
+        const focusBuf = 15;  // must match generateSchedule
         const bufStart = Math.max(focusStart - focusBuf, workStart);
         const bufEnd   = Math.min(focusEnd   + focusBuf, workEnd);
 
