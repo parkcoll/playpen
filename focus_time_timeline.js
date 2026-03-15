@@ -1082,8 +1082,12 @@
       p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="${COLOR.bg}"/>`);
 
       // 2b. Coloured timeline segments (clipped to bar).
+      // Phantom 'gap' events are invisible calibration markers — exclude them
+      // from bar rendering so every pixel stays coloured (blue/red/green/amber).
+      // The phantoms remain in the full events list for shape detection above.
+      const visibleEvents = events.filter(e => e.type !== 'gap');
       p.push(`<g clip-path="url(#${clipId})">`);
-      buildTimeline(events, workStart, workEnd, focusThr).forEach(seg => {
+      buildTimeline(visibleEvents, workStart, workEnd, focusThr).forEach(seg => {
         const x = tx(seg.start);
         const w = Math.max(1.5, tx(seg.end) - x);  // min 1.5px so tiny events remain visible
         const tip = TIP[seg.type] || '';
