@@ -270,6 +270,22 @@
 
     allEvents.sort((a, b) => a.start - b.start);
 
+    // ── Transition chat events at focus-zone boundaries ───────────────────────
+    // Place one visible chat event near the start of each focusBuf zone so the
+    // fragmented arches that bracket the focus plateau always have an actual
+    // interruption visible inside them (prevents arch-over-clean-blue).
+    if (hasFocus) {
+      const noOverlap = (s, d) =>
+        !allEvents.some(e => e.start < s + d && e.start + e.duration > s);
+      const tPre  = focusStart - focusBuf + 1;  // near start of pre-focus buffer
+      const tPost = focusEnd   + 2;             // just after post-focus boundary
+      if (tPre  >= workStart && tPre  + 5 <= workEnd && noOverlap(tPre,  5))
+        allEvents.push({ type: 'chat', start: tPre,  duration: 5 });
+      if (tPost >= workStart && tPost + 5 <= workEnd && noOverlap(tPost, 5))
+        allEvents.push({ type: 'chat', start: tPost, duration: 5 });
+      allEvents.sort((a, b) => a.start - b.start);
+    }
+
     // ── Boundary phantoms for clean shape detection ───────────────────────────
     // Insert 1-minute 'fragmented' events at the edges of the focus zone.
     // They render as blue on the bar (COLOR.fragmented = COLOR.focus = #3B82F6)
@@ -1128,28 +1144,33 @@
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
       let   fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
 
-      // The boundary phantoms sit at [focusStart-1, focusStart] and [focusEnd, focusEnd+1].
-      // The buffer zones just outside them (meeting_end → phantom, phantom → meeting_start)
-      // are guaranteed clean but can be up to 14 min — just under minGap=15, so
-      // getFragmentedBlocks silently skips them.  Add explicit arches for these so
-      // the bar and the above-bar shapes stay in sync.
-      // Only add when < 15 min (≥ 15 min are already covered by getFragmentedBlocks).
-      // Extend to focusStart / focusEnd so each arch is contiguous with the plateau.
+      // Build explicit arches for the focusBuf-wide zones that bracket the focus
+      // plateau.  generateSchedule places a transition chat event inside each
+      // buffer zone, so the arch always has a visible interruption under it.
+      // We also truncate / remove any getFragmentedBlocks arches that straddle the
+      // buffer-zone boundaries to avoid double-drawing overlapping shapes.
       if (hasFocus && focusStart != null) {
-        const prevEnd = events
-          .filter(e => e.start + e.duration <= focusStart - 1)
-          .reduce((m, e) => Math.max(m, e.start + e.duration), workStart);
-        const nextStart = events
-          .filter(e => e.start >= focusEnd + 1)
-          .reduce((m, e) => Math.min(m, e.start), workEnd);
+        const bufStart = Math.max(focusStart - focusBuf, workStart);
+        const bufEnd   = Math.min(focusEnd   + focusBuf, workEnd);
 
-        const preBuf  = (focusStart - 1) - prevEnd;
-        const postBuf = nextStart - (focusEnd + 1);
+        // Truncate arches that cross a buffer-zone edge; drop arches entirely inside.
+        fragBlocks = fragBlocks
+          .map(b => {
+            if (b.start < bufStart && b.end > bufStart) return { ...b, end: bufStart };
+            if (b.start < bufEnd   && b.end > bufEnd)   return { ...b, start: bufEnd  };
+            return b;
+          })
+          .filter(b =>
+            b.start < b.end &&
+            !(b.start >= bufStart && b.end <= focusStart) &&
+            !(b.start >= focusEnd && b.end <= bufEnd)
+          );
 
-        if (preBuf  >= 1 && preBuf  < 15)
-          fragBlocks = [...fragBlocks, { start: prevEnd,  end: focusStart }];
-        if (postBuf >= 1 && postBuf < 15)
-          fragBlocks = [...fragBlocks, { start: focusEnd, end: nextStart  }];
+        // Explicit buffer-zone arches (always exactly focusBuf wide).
+        if (focusStart > bufStart)
+          fragBlocks = [...fragBlocks, { start: bufStart, end: focusStart }];
+        if (bufEnd > focusEnd)
+          fragBlocks = [...fragBlocks, { start: focusEnd, end: bufEnd }];
       }
 
       const allShapes = [
