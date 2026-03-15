@@ -402,6 +402,56 @@
     return result;
   }
 
+  /**
+   * Calibrates the simulated schedule so its total fragmented time matches the
+   * measured Worklytics value. Works the same way as calibrateToFocusTarget but
+   * targets fragmented (< focusThr) gaps instead of focus (≥ focusThr) gaps.
+   *
+   * On each iteration: find the largest fragmented block, then insert a phantom
+   * event at its start with enough duration to either shrink it or eliminate it
+   * entirely (if the remaining piece would fall below minGap).
+   *
+   * @param {{ type: string, start: number, duration: number }[]} events
+   * @param {number} workStart
+   * @param {number} workEnd
+   * @param {number} focusThr
+   * @param {number} minGap       – minimum gap length to count as fragmented (px)
+   * @param {number} targetFragMin – desired total fragmented time in minutes
+   * @returns {{ type: string, start: number, duration: number }[]}
+   */
+  function calibrateToFragmentedTarget(events, workStart, workEnd, focusThr, minGap, targetFragMin) {
+    const sumFrag = evts =>
+      getFragmentedBlocks(evts, workStart, workEnd, focusThr, minGap)
+        .reduce((s, b) => s + b.end - b.start, 0);
+
+    let result = [...events];
+    for (let i = 0; i < 40; i++) {
+      const simFrag = sumFrag(result);
+      if (simFrag <= targetFragMin + 15) break;  // within tolerance — done
+
+      const blocks = getFragmentedBlocks(result, workStart, workEnd, focusThr, minGap);
+      if (!blocks.length) break;
+
+      // Target the largest fragmented block first.
+      blocks.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+      const blk    = blocks[0];
+
+      // Trim from the start of the block. Adding minGap to the trim ensures the
+      // remaining piece drops below minGap and is eliminated, rather than leaving
+      // a tiny fragment that still counts toward the total.
+      const trimDur = Math.min(simFrag - targetFragMin + minGap, blk.end - blk.start);
+      if (trimDur >= 5) {
+        result = [...result, { type: 'gap', start: blk.start, duration: Math.round(trimDur) }]
+                   .sort((a, b) => a.start - b.start);
+      } else {
+        const mid = Math.round((blk.start + blk.end) / 2);
+        result = [...result, { type: 'gap', start: mid - 5, duration: 10 }]
+                   .sort((a, b) => a.start - b.start);
+      }
+    }
+    return result;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // 4. SVG shape builders
   // ─────────────────────────────────────────────────────────────────────────────
@@ -867,19 +917,25 @@
       // ── Step 3: Generate and calibrate the schedule ────────────────────────
       let { events, hasFocus, focusStart, focusEnd } = generateSchedule(inputs);
 
-      // If the measured focus time is below the 2-hour threshold, the random
-      // meeting placement might have accidentally left a gap large enough to
-      // qualify as a focus block. Calibrate the schedule down by inserting
-      // phantom interruptions until focus matches the measured value.
-      // (This only applies when hasFocus is false — when a focus block was
-      // reserved, we use the explicit focusStart/focusEnd for rendering.)
-      if (!hasFocus && inputs.focusHoursDaily !== null) {
-        const targetMin = inputs.focusHoursDaily * 60;
-        if (targetMin < renderOpts.focusThr) {
-          events = calibrateToFocusTarget(
-            events, inputs.workStart, inputs.workEnd, renderOpts.focusThr, targetMin
-          );
-        }
+      // Calibrate focus time: the gap between meetings may be wider than the
+      // measured focusHoursDaily (because meetings don't fill every non-focus
+      // minute). Insert phantom events to trim the simulated total to match.
+      // Run this unconditionally whenever focus data is available.
+      if (inputs.focusHoursDaily !== null) {
+        events = calibrateToFocusTarget(
+          events, inputs.workStart, inputs.workEnd, renderOpts.focusThr,
+          Math.round(inputs.focusHoursDaily * 60)
+        );
+      }
+
+      // Calibrate fragmented time: after focus calibration the trimmed pieces
+      // become fragmented gaps which may exceed the measured value. Insert
+      // additional phantom events to bring fragmented time down to match.
+      if (inputs.fragmentedHoursDaily !== null) {
+        events = calibrateToFragmentedTarget(
+          events, inputs.workStart, inputs.workEnd, renderOpts.focusThr, 15,
+          Math.round(inputs.fragmentedHoursDaily * 60)
+        );
       }
 
       // ── Step 4: Render ─────────────────────────────────────────────────────
