@@ -245,8 +245,13 @@
     const emailEvents = Array.from({ length: emailClusters }, () => tryPlace('email', 5, 5)).filter(Boolean);
     const chatEvents  = Array.from({ length: chatClusters  }, () => tryPlace('chat',  5, 5)).filter(Boolean);
 
-    // Return all events sorted by start time — buildTimeline() requires this.
-    return [...validMeetings, ...emailEvents, ...chatEvents].sort((a, b) => a.start - b.start);
+    // Return the sorted event list together with the reserved focus zone boundaries
+    // so callers can render the focus plateau directly without relying on gap detection.
+    // Chat/email events are intentionally placed inside the focus zone (they represent
+    // the interruptions that fragment focus time), but that means gap detection can no
+    // longer find the original focus block — the explicit bounds fix this.
+    const events = [...validMeetings, ...emailEvents, ...chatEvents].sort((a, b) => a.start - b.start);
+    return { events, hasFocus, focusStart, focusEnd };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -859,13 +864,15 @@
       console.log('[FTL] schedule inputs:', JSON.stringify(inputs));
 
       // ── Step 3: Generate and calibrate the schedule ────────────────────────
-      let events = generateSchedule(inputs);
+      let { events, hasFocus, focusStart, focusEnd } = generateSchedule(inputs);
 
       // If the measured focus time is below the 2-hour threshold, the random
       // meeting placement might have accidentally left a gap large enough to
       // qualify as a focus block. Calibrate the schedule down by inserting
       // phantom interruptions until focus matches the measured value.
-      if (inputs.focusHoursDaily !== null) {
+      // (This only applies when hasFocus is false — when a focus block was
+      // reserved, we use the explicit focusStart/focusEnd for rendering.)
+      if (!hasFocus && inputs.focusHoursDaily !== null) {
         const targetMin = inputs.focusHoursDaily * 60;
         if (targetMin < renderOpts.focusThr) {
           events = calibrateToFocusTarget(
@@ -882,7 +889,7 @@
       // Store the full calibrated event list and render options so that legend
       // toggles can re-draw without re-running the full schedule generation.
       this._allEvents = events;
-      this._drawOpts  = { ...inputs, ...renderOpts };
+      this._drawOpts  = { ...inputs, ...renderOpts, hasFocus, focusStart, focusEnd };
 
       const filteredEvents = events.filter(e => !this._disabledTypes.has(e.type));
       this._draw(element, filteredEvents, this._drawOpts);
@@ -932,7 +939,7 @@
     //     — sorted left-to-right, staggered animation delay for cascade effect
     //  5. Hour-marker tick lines and labels
     //  6. Stats text (interruptions / focus time / fragmented time)
-    _draw(element, events, { workStart, workEnd, rampMin, focusThr }) {
+    _draw(element, events, { workStart, workEnd, rampMin, focusThr, hasFocus, focusStart, focusEnd }) {
       const svg = element.querySelector('#ftl-svg');
       if (!svg) return;
 
@@ -1042,8 +1049,20 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
-      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+      // When a focus block was reserved during schedule generation, use its
+      // explicit boundaries directly. Gap detection won't find it reliably
+      // because chat/email events are intentionally placed inside it.
+      // When no focus block was reserved (hasFocus = false), fall back to
+      // gap detection (which will return nothing if no gap ≥ focusThr exists).
+      const focusBlocks = hasFocus && focusStart != null
+        ? [{ start: focusStart, end: focusEnd }]
+        : getFocusBlocks(events, workStart, workEnd, focusThr);
+      // Fragmented blocks: gaps outside the focus zone that are long enough
+      // to appear above the bar (≥ 15 min) but shorter than the focus threshold.
+      const fragBlocksRaw = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+      const fragBlocks = hasFocus && focusStart != null
+        ? fragBlocksRaw.filter(b => b.end <= focusStart || b.start >= focusEnd)
+        : fragBlocksRaw;
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
