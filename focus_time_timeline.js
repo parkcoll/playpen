@@ -1137,17 +1137,30 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      // Focus plateau: when we have real focus data, use [focusStart, focusEnd] directly.
-      // This prevents spurious second plateaus appearing when event types are toggled off
-      // (filtering chat events can create gaps ≥ 120 min that getFocusBlocks would
-      // misidentify as additional focus blocks).
-      const focusBlocks = hasFocus && focusStart != null
-        ? [{ start: focusStart, end: focusEnd }]
-        : getFocusBlocks(events, workStart, workEnd, focusThr);
+      // Exclude boundary phantoms (type:'fragmented') from shape detection.
+      // Phantoms are 1-min markers at focusStart-1 and focusEnd inserted by generateSchedule
+      // to anchor the focus zone boundaries. If included, they create tiny gaps that
+      // getFragmentedBlocks fires arches for (the "arch at 11am" bug).
+      // Excluding them also allows large uninterrupted gaps (e.g. 8am–10am when chat is
+      // toggled off) to be correctly detected as focus blocks by getFocusBlocks.
+      const shapeEvents = events.filter(e => e.type !== 'fragmented');
 
-      // Fragmented arches use the filtered event list so arches only appear over
-      // interruptions that are actually visible in the bar.
-      const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+      const detectedFocus = getFocusBlocks(shapeEvents, workStart, workEnd, focusThr);
+
+      // When we have real focus data, pin any detected focus block that straddles
+      // [focusStart, focusEnd] to the exact reported range (prevents the plateau
+      // being wider than the reported focus hours).
+      const focusBlocks = hasFocus && focusStart != null
+        ? detectedFocus.map(b =>
+            b.start <= focusStart && b.end >= focusEnd
+              ? { start: focusStart, end: focusEnd }
+              : b
+          )
+        : detectedFocus;
+
+      // Fragmented arches use the same phantom-free filtered events so arches only
+      // appear over interruptions that are actually visible in the bar.
+      const fragBlocks = getFragmentedBlocks(shapeEvents, workStart, workEnd, focusThr, 15);
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
