@@ -277,8 +277,8 @@
     if (hasFocus) {
       const noOverlap = (s, d) =>
         !allEvents.some(e => e.start < s + d && e.start + e.duration > s);
-      const tPre  = focusStart - focusBuf + 1;  // near start of pre-focus buffer
-      const tPost = focusEnd   + 2;             // just after post-focus boundary
+      const tPre  = focusStart - 6;   // ends at phantom (focusStart-1), flush with plateau ramp
+      const tPost = focusEnd   + 2;  // just after post-focus boundary
       if (tPre  >= workStart && tPre  + 5 <= workEnd && noOverlap(tPre,  5))
         allEvents.push({ type: 'chat', start: tPre,  duration: 5 });
       if (tPost >= workStart && tPost + 5 <= workEnd && noOverlap(tPost, 5))
