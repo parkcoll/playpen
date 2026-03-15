@@ -268,30 +268,6 @@
       }
     }
 
-    // ── Bound the focus gap ───────────────────────────────────────────────────
-    // After filler events are placed, the detected focus block (the gap between
-    // the last pre-focus event and first post-focus event) should be close to
-    // focusMin. If it's still too wide (no filler events landed near the edges),
-    // place one bounding chat event at each open edge to close the gap.
-    if (hasFocus && focusHoursDaily != null) {
-      const targetFocusMin = Math.round(focusHoursDaily * 60);
-      const sorted = allEvents.slice().sort((a, b) => a.start - b.start);
-      const focusGaps = getFocusBlocks(sorted, workStart, workEnd, focusThr);
-      if (focusGaps.length > 0) {
-        const gap = focusGaps.reduce((a, b) => (b.end - b.start > a.end - a.start) ? b : a);
-        const excess = (gap.end - gap.start) - targetFocusMin;
-        if (excess > 20) {
-          // Absorb excess from the start of the gap with a visible chat event.
-          const boundDur = Math.max(10, excess - 5);
-          const boundStart = gap.start;
-          if (!occupied.some(o => boundStart < o.e && boundStart + boundDur > o.s)) {
-            allEvents.push({ type: 'chat', start: boundStart, duration: boundDur });
-            occupied.push({ s: boundStart - 5, e: boundStart + boundDur + 5 });
-          }
-        }
-      }
-    }
-
     allEvents.sort((a, b) => a.start - b.start);
     return { events: allEvents, hasFocus, focusStart, focusEnd };
   }
@@ -1131,10 +1107,39 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      // Detect focus and fragmented blocks from gaps between events. The same
-      // event list is used for both bar and shapes — they're always in sync.
-      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
-      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+      // Detect focus and fragmented blocks from gaps between events.
+      // When a focus zone was reserved, the gap between meetings is wider than
+      // focusHoursDaily (because meetings don't land right at the zone edges).
+      // We handle this by splitting that containing gap at the focus zone
+      // boundaries: the plateau covers exactly [focusStart, focusEnd] and the
+      // sections before/after become fragmented arches instead.
+      const detectedFocus = getFocusBlocks(events, workStart, workEnd, focusThr);
+      const detectedFrag  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+
+      let focusBlocks, fragBlocks;
+      if (hasFocus && focusStart != null) {
+        // Find the gap that contains the reserved focus zone.
+        const containing = detectedFocus.find(b => b.start <= focusStart && b.end >= focusEnd);
+        if (containing) {
+          // Plateau = exactly the reserved zone; edges become fragmented arches.
+          focusBlocks = [
+            ...detectedFocus.filter(b => b !== containing),
+            { start: focusStart, end: focusEnd },
+          ];
+          const extraFrag = [];
+          if (focusStart - containing.start >= 15)
+            extraFrag.push({ start: containing.start, end: focusStart });
+          if (containing.end - focusEnd >= 15)
+            extraFrag.push({ start: focusEnd, end: containing.end });
+          fragBlocks = [...detectedFrag, ...extraFrag];
+        } else {
+          focusBlocks = detectedFocus.length ? detectedFocus : [{ start: focusStart, end: focusEnd }];
+          fragBlocks  = detectedFrag;
+        }
+      } else {
+        focusBlocks = detectedFocus;
+        fragBlocks  = detectedFrag;
+      }
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
