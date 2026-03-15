@@ -1145,18 +1145,10 @@
       // toggled off) to be correctly detected as focus blocks by getFocusBlocks.
       const shapeEvents = events.filter(e => e.type !== 'fragmented');
 
-      const detectedFocus = getFocusBlocks(shapeEvents, workStart, workEnd, focusThr);
-
-      // When we have real focus data, pin any detected focus block that straddles
-      // [focusStart, focusEnd] to the exact reported range (prevents the plateau
-      // being wider than the reported focus hours).
-      const focusBlocks = hasFocus && focusStart != null
-        ? detectedFocus.map(b =>
-            b.start <= focusStart && b.end >= focusEnd
-              ? { start: focusStart, end: focusEnd }
-              : b
-          )
-        : detectedFocus;
+      // Let getFocusBlocks determine plateau boundaries naturally from visible events.
+      // No pinning — the plateau should match whatever the bar shows as uninterrupted,
+      // regardless of whether chat events are toggled on or off.
+      const focusBlocks = getFocusBlocks(shapeEvents, workStart, workEnd, focusThr);
 
       // Fragmented arches use the same phantom-free filtered events so arches only
       // appear over interruptions that are actually visible in the bar.
