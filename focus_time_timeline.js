@@ -1142,37 +1142,11 @@
       // finds exactly [focusStart, focusEnd] and getFragmentedBlocks picks up
       // the pre/post sections naturally — no manual splitting needed here.
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
-      let   fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
-
-      // Build explicit arches for the focusBuf-wide zones that bracket the focus
-      // plateau.  generateSchedule places a transition chat event inside each
-      // buffer zone, so the arch always has a visible interruption under it.
-      // We also truncate / remove any getFragmentedBlocks arches that straddle the
-      // buffer-zone boundaries to avoid double-drawing overlapping shapes.
-      if (hasFocus && focusStart != null) {
-        const focusBuf = 15;  // must match generateSchedule
-        const bufStart = Math.max(focusStart - focusBuf, workStart);
-        const bufEnd   = Math.min(focusEnd   + focusBuf, workEnd);
-
-        // Truncate arches that cross a buffer-zone edge; drop arches entirely inside.
-        fragBlocks = fragBlocks
-          .map(b => {
-            if (b.start < bufStart && b.end > bufStart) return { ...b, end: bufStart };
-            if (b.start < bufEnd   && b.end > bufEnd)   return { ...b, start: bufEnd  };
-            return b;
-          })
-          .filter(b =>
-            b.start < b.end &&
-            !(b.start >= bufStart && b.end <= focusStart) &&
-            !(b.start >= focusEnd && b.end <= bufEnd)
-          );
-
-        // Explicit buffer-zone arches (always exactly focusBuf wide).
-        if (focusStart > bufStart)
-          fragBlocks = [...fragBlocks, { start: bufStart, end: focusStart }];
-        if (bufEnd > focusEnd)
-          fragBlocks = [...fragBlocks, { start: focusEnd, end: bufEnd }];
-      }
+      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+      // Note: generateSchedule places a visible transition chat event in each
+      // focusBuf-wide zone at the focus plateau edges, so those zones are never
+      // a clean-blue bar section even though they're too short (< 15 min) for
+      // getFragmentedBlocks to arch.  No explicit arch is needed there.
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
