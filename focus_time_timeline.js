@@ -940,7 +940,8 @@
     //     — sorted left-to-right, staggered animation delay for cascade effect
     //  5. Hour-marker tick lines and labels
     //  6. Stats text (interruptions / focus time / fragmented time)
-    _draw(element, events, { workStart, workEnd, rampMin, focusThr, hasFocus, focusStart, focusEnd }) {
+    _draw(element, events, { workStart, workEnd, rampMin, focusThr, hasFocus, focusStart, focusEnd,
+                              focusHoursDaily, fragmentedHoursDaily }) {
       const svg = element.querySelector('#ftl-svg');
       if (!svg) return;
 
@@ -1130,8 +1131,15 @@
           e => e.type === 'meeting' || e.type === 'email' || e.type === 'chat'
         ).length;
 
-        const focusMin = focusBlocks.reduce((s, b) => s + (b.end - b.start), 0);
-        const fragMin  = fragBlocks.reduce( (s, b) => s + (b.end - b.start), 0);
+        // Use the measured Worklytics values when available — the simulated
+        // gaps may be wider than measured because meetings don't fill every
+        // minute outside the focus zone.
+        const focusMin = focusHoursDaily != null
+          ? Math.round(focusHoursDaily      * 60)
+          : focusBlocks.reduce((s, b) => s + (b.end - b.start), 0);
+        const fragMin  = fragmentedHoursDaily != null
+          ? Math.round(fragmentedHoursDaily * 60)
+          : fragBlocks.reduce( (s, b) => s + (b.end - b.start), 0);
 
         statsEl.innerHTML =
           `<b>${interruptions}</b> interruption${interruptions !== 1 ? 's' : ''} · ` +
