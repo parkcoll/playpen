@@ -269,6 +269,20 @@
     }
 
     allEvents.sort((a, b) => a.start - b.start);
+
+    // ── Boundary phantoms for clean shape detection ───────────────────────────
+    // Insert 1-minute 'fragmented' events at the edges of the focus zone.
+    // They render as blue on the bar (COLOR.fragmented = COLOR.focus = #3B82F6)
+    // so they're visually invisible, but they create precise gap boundaries:
+    //   • getFocusBlocks  finds exactly [focusStart, focusEnd]
+    //   • getFragmentedBlocks finds the pre/post sections naturally
+    // This eliminates the extraFrag overlap problem in _draw entirely.
+    if (hasFocus) {
+      allEvents.push({ type: 'fragmented', start: focusStart - 1, duration: 1 });
+      allEvents.push({ type: 'fragmented', start: focusEnd,       duration: 1 });
+      allEvents.sort((a, b) => a.start - b.start);
+    }
+
     return { events: allEvents, hasFocus, focusStart, focusEnd };
   }
 
@@ -1108,38 +1122,11 @@
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
       // Detect focus and fragmented blocks from gaps between events.
-      // When a focus zone was reserved, the gap between meetings is wider than
-      // focusHoursDaily (because meetings don't land right at the zone edges).
-      // We handle this by splitting that containing gap at the focus zone
-      // boundaries: the plateau covers exactly [focusStart, focusEnd] and the
-      // sections before/after become fragmented arches instead.
-      const detectedFocus = getFocusBlocks(events, workStart, workEnd, focusThr);
-      const detectedFrag  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
-
-      let focusBlocks, fragBlocks;
-      if (hasFocus && focusStart != null) {
-        // Find the gap that contains the reserved focus zone.
-        const containing = detectedFocus.find(b => b.start <= focusStart && b.end >= focusEnd);
-        if (containing) {
-          // Plateau = exactly the reserved zone; edges become fragmented arches.
-          focusBlocks = [
-            ...detectedFocus.filter(b => b !== containing),
-            { start: focusStart, end: focusEnd },
-          ];
-          const extraFrag = [];
-          if (focusStart - containing.start >= 15)
-            extraFrag.push({ start: containing.start, end: focusStart });
-          if (containing.end - focusEnd >= 15)
-            extraFrag.push({ start: focusEnd, end: containing.end });
-          fragBlocks = [...detectedFrag, ...extraFrag];
-        } else {
-          focusBlocks = detectedFocus.length ? detectedFocus : [{ start: focusStart, end: focusEnd }];
-          fragBlocks  = detectedFrag;
-        }
-      } else {
-        focusBlocks = detectedFocus;
-        fragBlocks  = detectedFrag;
-      }
+      // Boundary phantoms inserted in generateSchedule ensure getFocusBlocks
+      // finds exactly [focusStart, focusEnd] and getFragmentedBlocks picks up
+      // the pre/post sections naturally — no manual splitting needed here.
+      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
+      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
