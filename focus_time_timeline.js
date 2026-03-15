@@ -103,7 +103,8 @@
    * @param {number} opts.workEnd           – day end   in minutes from midnight (e.g. 1080 = 6 pm)
    * @returns {{ type: string, start: number, duration: number }[]}
    */
-  function generateSchedule({ meetingMinutes, numMeetings, numChat, numEmails, focusHoursDaily, workStart, workEnd }) {
+  function generateSchedule({ meetingMinutes, numMeetings, numChat, numEmails,
+                               focusHoursDaily, fragmentedHoursDaily, focusThr, workStart, workEnd }) {
     // Seed the RNG with a hash of all input values so any change in metrics
     // produces a noticeably different (but still deterministic) schedule.
     const rng = makeRNG(
@@ -246,13 +247,53 @@
     const emailEvents = Array.from({ length: emailClusters }, () => tryPlace('email', 5, 5)).filter(Boolean);
     const chatEvents  = Array.from({ length: chatClusters  }, () => tryPlace('chat',  5, 5)).filter(Boolean);
 
-    // Return the sorted event list together with the reserved focus zone boundaries
-    // so callers can render the focus plateau directly without relying on gap detection.
-    // Chat/email events are intentionally placed inside the focus zone (they represent
-    // the interruptions that fragment focus time), but that means gap detection can no
-    // longer find the original focus block — the explicit bounds fix this.
-    const events = [...validMeetings, ...emailEvents, ...chatEvents].sort((a, b) => a.start - b.start);
-    return { events, hasFocus, focusStart, focusEnd };
+    const allEvents = [...validMeetings, ...emailEvents, ...chatEvents];
+
+    // ── Filler: add chat events to calibrate fragmented time ──────────────────
+    // The schedule often has more open time outside the focus zone than the
+    // measured fragmentedHoursDaily. Rather than invisible phantom events, add
+    // real chat events so the bar and shapes always stay consistent with each
+    // other. Each iteration places one extra chat cluster until the fragmented
+    // total converges to the target (within a 15-minute tolerance).
+    if (fragmentedHoursDaily != null) {
+      const targetFragMin = Math.round(fragmentedHoursDaily * 60);
+      for (let i = 0; i < 40; i++) {
+        const sorted = allEvents.slice().sort((a, b) => a.start - b.start);
+        const fragTotal = getFragmentedBlocks(sorted, workStart, workEnd, focusThr, 15)
+          .reduce((s, b) => s + b.end - b.start, 0);
+        if (fragTotal <= targetFragMin + 15) break;
+        const ev = tryPlace('chat', 5, 5);
+        if (!ev) break;  // no more room outside the focus zone
+        allEvents.push(ev);
+      }
+    }
+
+    // ── Bound the focus gap ───────────────────────────────────────────────────
+    // After filler events are placed, the detected focus block (the gap between
+    // the last pre-focus event and first post-focus event) should be close to
+    // focusMin. If it's still too wide (no filler events landed near the edges),
+    // place one bounding chat event at each open edge to close the gap.
+    if (hasFocus && focusHoursDaily != null) {
+      const targetFocusMin = Math.round(focusHoursDaily * 60);
+      const sorted = allEvents.slice().sort((a, b) => a.start - b.start);
+      const focusGaps = getFocusBlocks(sorted, workStart, workEnd, focusThr);
+      if (focusGaps.length > 0) {
+        const gap = focusGaps.reduce((a, b) => (b.end - b.start > a.end - a.start) ? b : a);
+        const excess = (gap.end - gap.start) - targetFocusMin;
+        if (excess > 20) {
+          // Absorb excess from the start of the gap with a visible chat event.
+          const boundDur = Math.max(10, excess - 5);
+          const boundStart = gap.start;
+          if (!occupied.some(o => boundStart < o.e && boundStart + boundDur > o.s)) {
+            allEvents.push({ type: 'chat', start: boundStart, duration: boundDur });
+            occupied.push({ s: boundStart - 5, e: boundStart + boundDur + 5 });
+          }
+        }
+      }
+    }
+
+    allEvents.sort((a, b) => a.start - b.start);
+    return { events: allEvents, hasFocus, focusStart, focusEnd };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -898,6 +939,10 @@
       //
       // Default values are used when a metric is missing from the query,
       // producing a plausible "average" schedule rather than an empty chart.
+      const renderOpts = {
+        rampMin:  config.ramp_minutes              || 12,
+        focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
+      };
       const inputs = {
         numMeetings:          Math.max(1, Math.round((meetingsAttended / 5) || 4)),
         meetingMinutes:       ((meetingHours / 5) || 2) * 60,  // weekly hours → daily minutes
@@ -905,38 +950,16 @@
         numChat:              (chatSent    / 5) || 20,           // weekly → daily
         focusHoursDaily:      focusHours      > 0 ? focusHours      : null,  // already daily
         fragmentedHoursDaily: fragmentedHours > 0 ? fragmentedHours : null,  // already daily
+        focusThr:             renderOpts.focusThr,               // passed into generateSchedule
         workStart:            Math.round((config.work_start_hour || 8)  * 60),
         workEnd:              Math.round((config.work_end_hour   || 18) * 60),
       };
-      const renderOpts = {
-        rampMin:  config.ramp_minutes              || 12,
-        focusThr: Math.round((config.focus_threshold_hours || 2) * 60),
-      };
       console.log('[FTL] schedule inputs:', JSON.stringify(inputs));
 
-      // ── Step 3: Generate and calibrate the schedule ────────────────────────
-      let { events, hasFocus, focusStart, focusEnd } = generateSchedule(inputs);
-
-      // Calibrate focus time: the gap between meetings may be wider than the
-      // measured focusHoursDaily (because meetings don't fill every non-focus
-      // minute). Insert phantom events to trim the simulated total to match.
-      // Run this unconditionally whenever focus data is available.
-      if (inputs.focusHoursDaily !== null) {
-        events = calibrateToFocusTarget(
-          events, inputs.workStart, inputs.workEnd, renderOpts.focusThr,
-          Math.round(inputs.focusHoursDaily * 60)
-        );
-      }
-
-      // Calibrate fragmented time: after focus calibration the trimmed pieces
-      // become fragmented gaps which may exceed the measured value. Insert
-      // additional phantom events to bring fragmented time down to match.
-      if (inputs.fragmentedHoursDaily !== null) {
-        events = calibrateToFragmentedTarget(
-          events, inputs.workStart, inputs.workEnd, renderOpts.focusThr, 15,
-          Math.round(inputs.fragmentedHoursDaily * 60)
-        );
-      }
+      // ── Step 3: Generate schedule ──────────────────────────────────────────
+      // generateSchedule handles calibration internally by placing real chat
+      // events — keeping bar and shapes always in sync with each other.
+      const { events, hasFocus, focusStart, focusEnd } = generateSchedule(inputs);
 
       // ── Step 4: Render ─────────────────────────────────────────────────────
       // Persist the disabled-type set across Looker data refreshes so that
@@ -1082,12 +1105,9 @@
       p.push(`<rect x="${fullBarX}" y="${barY}" width="${fullBarW}" height="${barH}" fill="${COLOR.bg}"/>`);
 
       // 2b. Coloured timeline segments (clipped to bar).
-      // Phantom 'gap' events are invisible calibration markers — exclude them
-      // from bar rendering so every pixel stays coloured (blue/red/green/amber).
-      // The phantoms remain in the full events list for shape detection above.
-      const visibleEvents = events.filter(e => e.type !== 'gap');
+      // All events are real visible events — no phantom gap types exist.
       p.push(`<g clip-path="url(#${clipId})">`);
-      buildTimeline(visibleEvents, workStart, workEnd, focusThr).forEach(seg => {
+      buildTimeline(events, workStart, workEnd, focusThr).forEach(seg => {
         const x = tx(seg.start);
         const w = Math.max(1.5, tx(seg.end) - x);  // min 1.5px so tiny events remain visible
         const tip = TIP[seg.type] || '';
@@ -1111,10 +1131,8 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      // Detect focus and fragmented blocks directly from the gaps between events.
-      // Chat/email are restricted from the reserved focus zone, so the gap is
-      // always clean and getFocusBlocks reliably finds it. The plateau spans the
-      // full uninterrupted stretch — every open section of the bar gets a shape.
+      // Detect focus and fragmented blocks from gaps between events. The same
+      // event list is used for both bar and shapes — they're always in sync.
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
       const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
 
