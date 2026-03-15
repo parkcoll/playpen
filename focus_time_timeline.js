@@ -1126,7 +1126,31 @@
       // finds exactly [focusStart, focusEnd] and getFragmentedBlocks picks up
       // the pre/post sections naturally — no manual splitting needed here.
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
-      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+      let   fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
+
+      // The boundary phantoms sit at [focusStart-1, focusStart] and [focusEnd, focusEnd+1].
+      // The buffer zones just outside them (meeting_end → phantom, phantom → meeting_start)
+      // are guaranteed clean but can be up to 14 min — just under minGap=15, so
+      // getFragmentedBlocks silently skips them.  Add explicit arches for these so
+      // the bar and the above-bar shapes stay in sync.
+      // Only add when < 15 min (≥ 15 min are already covered by getFragmentedBlocks).
+      // Extend to focusStart / focusEnd so each arch is contiguous with the plateau.
+      if (hasFocus && focusStart != null) {
+        const prevEnd = events
+          .filter(e => e.start + e.duration <= focusStart - 1)
+          .reduce((m, e) => Math.max(m, e.start + e.duration), workStart);
+        const nextStart = events
+          .filter(e => e.start >= focusEnd + 1)
+          .reduce((m, e) => Math.min(m, e.start), workEnd);
+
+        const preBuf  = (focusStart - 1) - prevEnd;
+        const postBuf = nextStart - (focusEnd + 1);
+
+        if (preBuf  >= 1 && preBuf  < 15)
+          fragBlocks = [...fragBlocks, { start: prevEnd,  end: focusStart }];
+        if (postBuf >= 1 && postBuf < 15)
+          fragBlocks = [...fragBlocks, { start: focusEnd, end: nextStart  }];
+      }
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
