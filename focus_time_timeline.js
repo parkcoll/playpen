@@ -1137,16 +1137,14 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      // Detect focus and fragmented blocks from gaps between events.
-      // Boundary phantoms inserted in generateSchedule ensure getFocusBlocks
-      // finds exactly [focusStart, focusEnd] and getFragmentedBlocks picks up
-      // the pre/post sections naturally — no manual splitting needed here.
-      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
-      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
-      // Note: generateSchedule places a visible transition chat event in each
-      // focusBuf-wide zone at the focus plateau edges, so those zones are never
-      // a clean-blue bar section even though they're too short (< 15 min) for
-      // getFragmentedBlocks to arch.  No explicit arch is needed there.
+      // Shape detection always uses the FULL unfiltered event list so that
+      // toggling chat/email off doesn't create spurious focus plateaus (chat
+      // events in the 8am region would otherwise leave gaps ≥ 120 min that
+      // look like additional focus blocks).  Bar rendering below uses the
+      // filtered `events` so toggled-off types disappear from the bar.
+      const shapeEvents = this._allEvents || events;
+      const focusBlocks = getFocusBlocks(shapeEvents, workStart, workEnd, focusThr);
+      const fragBlocks  = getFragmentedBlocks(shapeEvents, workStart, workEnd, focusThr, 15);
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
