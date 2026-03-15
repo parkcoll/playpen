@@ -1050,20 +1050,12 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      // When a focus block was reserved during schedule generation, use its
-      // explicit boundaries directly. Gap detection won't find it reliably
-      // because chat/email events are intentionally placed inside it.
-      // When no focus block was reserved (hasFocus = false), fall back to
-      // gap detection (which will return nothing if no gap ≥ focusThr exists).
-      const focusBlocks = hasFocus && focusStart != null
-        ? [{ start: focusStart, end: focusEnd }]
-        : getFocusBlocks(events, workStart, workEnd, focusThr);
-      // Fragmented blocks: gaps outside the focus zone that are long enough
-      // to appear above the bar (≥ 15 min) but shorter than the focus threshold.
-      const fragBlocksRaw = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
-      const fragBlocks = hasFocus && focusStart != null
-        ? fragBlocksRaw.filter(b => b.end <= focusStart || b.start >= focusEnd)
-        : fragBlocksRaw;
+      // Detect focus and fragmented blocks directly from the gaps between events.
+      // Chat/email are restricted from the reserved focus zone, so the gap is
+      // always clean and getFocusBlocks reliably finds it. The plateau spans the
+      // full uninterrupted stretch — every open section of the bar gets a shape.
+      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
+      const fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 15);
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
