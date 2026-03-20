@@ -1139,21 +1139,18 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      // Derive focus plateaus and fragmented arches directly from the timeline
-      // segments already built for the bar. This guarantees that every blue bar
-      // section has a shape above it and no shape appears over a non-blue section.
-      // Boundary phantoms (type:'fragmented') produce segments classified as
-      // 'fragmented' by buildTimeline — they are 1-min and will get a tiny arch,
-      // which is fine and actually correct (they mark the focus zone boundary).
-      // Only draw shapes over genuine gap segments (isGap:true), never over
-      // event segments like boundary phantoms or calibration placeholders.
-      const focusBlocks = timelineSegs
-        .filter(s => s.isGap && s.type === 'focus')
-        .map(s => ({ start: s.start, end: s.end }));
+      //
+      // getFocusBlocks    → all uninterrupted gaps ≥ focusThr (the plateau blocks)
+      // getFragmentedBlocks → all uninterrupted gaps ≥ 1 min and < focusThr
+      //   minGap=1 ensures even tiny gaps get an arch, so every blue section
+      //   that isn't a full focus plateau is visually labelled as fragmented time.
+      //
+      // Boundary phantoms in the events list mark the exact edges of the focus
+      // zone, so getFocusBlocks returns exactly [focusStart, focusEnd] and
+      // getFragmentedBlocks correctly finds the surrounding smaller gaps.
+      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
 
-      const fragBlocks = timelineSegs
-        .filter(s => s.isGap && s.type === 'fragmented')
-        .map(s => ({ start: s.start, end: s.end }));
+      const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 1);
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
