@@ -709,7 +709,7 @@
              font-size:13px;color:#5f6368;line-height:1.4}
   .ftl-stats b{font-weight:600;color:#3c4043}
   .ftl-legend{display:flex;gap:24px;justify-content:center;flex-shrink:0;
-              margin-top:1px;font-size:13px;color:#5f6368}
+              margin-top:10px;font-size:13px;color:#5f6368}
   .ftl-li{display:flex;align-items:center;gap:6px}
   .ftl-sw{width:14px;height:14px;border-radius:2px;flex-shrink:0}
 
