@@ -1140,16 +1140,17 @@
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
       //
-      // getFocusBlocks    → all uninterrupted gaps ≥ focusThr (the plateau blocks)
-      // getFragmentedBlocks → all uninterrupted gaps ≥ 1 min and < focusThr
-      //   minGap=1 ensures even tiny gaps get an arch, so every blue section
-      //   that isn't a full focus plateau is visually labelled as fragmented time.
-      //
-      // Boundary phantoms in the events list mark the exact edges of the focus
-      // zone, so getFocusBlocks returns exactly [focusStart, focusEnd] and
-      // getFragmentedBlocks correctly finds the surrounding smaller gaps.
-      const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
+      // Focus plateau: use the known focus zone directly rather than re-computing
+      // from the (potentially toggled) event list. getFocusBlocks would find a
+      // ghost second plateau when chat/email are toggled off — removing those
+      // events can leave a gap ≥ focusThr outside the focus zone, tricking it
+      // into returning two blocks. Using focusStart/focusEnd directly always
+      // yields exactly one plateau that matches the Worklytics measurement,
+      // regardless of which event types are currently toggled.
+      const focusBlocks = hasFocus ? [{ start: focusStart, end: focusEnd }] : [];
 
+      // Fragmented arches: all uninterrupted gaps ≥ 2 min and < focusThr.
+      // minGap=2 suppresses the 1-minute boundary-phantom artifact at focusEnd.
       const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 2);
 
       const allShapes = [
