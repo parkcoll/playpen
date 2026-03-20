@@ -1140,18 +1140,30 @@
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
       //
-      // Focus plateau: use the known focus zone directly rather than re-computing
-      // from the (potentially toggled) event list. getFocusBlocks would find a
-      // ghost second plateau when chat/email are toggled off — removing those
-      // events can leave a gap ≥ focusThr outside the focus zone, tricking it
-      // into returning two blocks. Using focusStart/focusEnd directly always
-      // yields exactly one plateau that matches the Worklytics measurement,
-      // regardless of which event types are currently toggled.
-      const focusBlocks = hasFocus ? [{ start: focusStart, end: focusEnd }] : [];
-
-      // Fragmented arches: all uninterrupted gaps ≥ 2 min and < focusThr.
-      // minGap=2 suppresses the 1-minute boundary-phantom artifact at focusEnd.
-      const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 2);
+      // Two shape-detection modes depending on toggle state:
+      //
+      // DEFAULT (nothing toggled):
+      //   Use the Worklytics-measured zone directly — always exactly one plateau
+      //   covering [focusStart, focusEnd]. This matches the measured value and
+      //   avoids any boundary-phantom artifacts.
+      //
+      // TOGGLE MODE (one or more types disabled):
+      //   Recompute dynamically from the remaining events so users can explore
+      //   "what if I had no meetings?" hypotheticals. Boundary phantoms (type:
+      //   'fragmented') are excluded from shape detection here — they only exist
+      //   for bar rendering and would otherwise create a phantom 1-min gap at
+      //   focusEnd that splits the plateau in two. Without them, uninterrupted
+      //   time extends naturally: toggle everything off → whole day is focus.
+      const anyDisabled = this._disabledTypes && this._disabledTypes.size > 0;
+      let focusBlocks, fragBlocks;
+      if (!anyDisabled) {
+        focusBlocks = hasFocus ? [{ start: focusStart, end: focusEnd }] : [];
+        fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 2);
+      } else {
+        const shapeEvents = events.filter(e => e.type !== 'fragmented');
+        focusBlocks = getFocusBlocks(shapeEvents, workStart, workEnd, focusThr);
+        fragBlocks  = getFragmentedBlocks(shapeEvents, workStart, workEnd, focusThr, 2);
+      }
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
@@ -1231,7 +1243,6 @@
         // see the hypothetical gain from removing meetings/email/chat.
         // When nothing is toggled, prefer the raw Worklytics metric values
         // (more accurate than the simulated gap widths).
-        const anyDisabled = this._disabledTypes && this._disabledTypes.size > 0;
         const focusMin = (!anyDisabled && focusHoursDaily != null)
           ? Math.round(focusHoursDaily * 60)
           : focusBlocks.reduce((s, b) => s + (b.end - b.start), 0);
