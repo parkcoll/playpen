@@ -321,28 +321,20 @@
    * @param {number} focusThr – minimum gap length (minutes) to count as focus time
    * @returns {{ start: number, end: number, type: string }[]}
    */
-  function buildTimeline(events, workStart, workEnd, focusThr, minGap = 10) {
-    // Gaps shorter than minGap are left as background (no blue) so the bar
-    // never shows a blue section without a corresponding shape above it.
-    const classify = dur => {
-      if (dur < minGap)   return 'bg';          // too short — leave as gray
-      if (dur >= focusThr) return 'focus';
-      return 'fragmented';
-    };
+  function buildTimeline(events, workStart, workEnd, focusThr) {
+    const classify = dur => dur >= focusThr ? 'focus' : 'fragmented';
     const segs = [];
     let t = workStart;
     for (const ev of events) {
       if (ev.start > t) {
-        const type = classify(ev.start - t);
-        if (type !== 'bg') segs.push({ start: t, end: ev.start, type });
+        // isGap:true — a genuine uninterrupted stretch that gets a shape above it
+        segs.push({ start: t, end: ev.start, type: classify(ev.start - t), isGap: true });
       }
-      segs.push({ start: ev.start, end: ev.start + ev.duration, type: ev.type });
+      segs.push({ start: ev.start, end: ev.start + ev.duration, type: ev.type, isGap: false });
       t = ev.start + ev.duration;
     }
-    // Classify any trailing gap after the last event.
     if (t < workEnd) {
-      const type = classify(workEnd - t);
-      if (type !== 'bg') segs.push({ start: t, end: workEnd, type });
+      segs.push({ start: t, end: workEnd, type: classify(workEnd - t), isGap: true });
     }
     return segs;
   }
@@ -1122,7 +1114,8 @@
       // 2b. Coloured timeline segments (clipped to bar).
       // All events are real visible events — no phantom gap types exist.
       p.push(`<g clip-path="url(#${clipId})">`);
-      buildTimeline(events, workStart, workEnd, focusThr, 10).forEach(seg => {
+      const timelineSegs = buildTimeline(events, workStart, workEnd, focusThr);
+      timelineSegs.forEach(seg => {
         const x = tx(seg.start);
         const w = Math.max(1.5, tx(seg.end) - x);  // min 1.5px so tiny events remain visible
         const tip = TIP[seg.type] || '';
@@ -1146,22 +1139,21 @@
       // Focus plateau height scales linearly with block duration (capped at maxFH).
       // Fragmented arch height uses a power curve (pct^0.6) so medium-length
       // blocks (e.g. 1 h) appear noticeably taller than very short ones.
-      // Exclude boundary phantoms (type:'fragmented') from shape detection.
-      // Phantoms are 1-min markers at focusStart-1 and focusEnd inserted by generateSchedule
-      // to anchor the focus zone boundaries. If included, they create tiny gaps that
-      // getFragmentedBlocks fires arches for (the "arch at 11am" bug).
-      // Excluding them also allows large uninterrupted gaps (e.g. 8am–10am when chat is
-      // toggled off) to be correctly detected as focus blocks by getFocusBlocks.
-      const shapeEvents = events.filter(e => e.type !== 'fragmented');
+      // Derive focus plateaus and fragmented arches directly from the timeline
+      // segments already built for the bar. This guarantees that every blue bar
+      // section has a shape above it and no shape appears over a non-blue section.
+      // Boundary phantoms (type:'fragmented') produce segments classified as
+      // 'fragmented' by buildTimeline — they are 1-min and will get a tiny arch,
+      // which is fine and actually correct (they mark the focus zone boundary).
+      // Only draw shapes over genuine gap segments (isGap:true), never over
+      // event segments like boundary phantoms or calibration placeholders.
+      const focusBlocks = timelineSegs
+        .filter(s => s.isGap && s.type === 'focus')
+        .map(s => ({ start: s.start, end: s.end }));
 
-      // Let getFocusBlocks determine plateau boundaries naturally from visible events.
-      // No pinning — the plateau should match whatever the bar shows as uninterrupted,
-      // regardless of whether chat events are toggled on or off.
-      const focusBlocks = getFocusBlocks(shapeEvents, workStart, workEnd, focusThr);
-
-      // Fragmented arches use the same phantom-free filtered events so arches only
-      // appear over interruptions that are actually visible in the bar.
-      const fragBlocks = getFragmentedBlocks(shapeEvents, workStart, workEnd, focusThr, 10);
+      const fragBlocks = timelineSegs
+        .filter(s => s.isGap && s.type === 'fragmented')
+        .map(s => ({ start: s.start, end: s.end }));
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
