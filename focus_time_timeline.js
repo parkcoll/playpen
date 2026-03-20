@@ -321,20 +321,28 @@
    * @param {number} focusThr – minimum gap length (minutes) to count as focus time
    * @returns {{ start: number, end: number, type: string }[]}
    */
-  function buildTimeline(events, workStart, workEnd, focusThr) {
-    const classify = dur => dur >= focusThr ? 'focus' : 'fragmented';
+  function buildTimeline(events, workStart, workEnd, focusThr, minGap = 10) {
+    // Gaps shorter than minGap are left as background (no blue) so the bar
+    // never shows a blue section without a corresponding shape above it.
+    const classify = dur => {
+      if (dur < minGap)   return 'bg';          // too short — leave as gray
+      if (dur >= focusThr) return 'focus';
+      return 'fragmented';
+    };
     const segs = [];
     let t = workStart;
     for (const ev of events) {
       if (ev.start > t) {
-        segs.push({ start: t, end: ev.start, type: classify(ev.start - t) });
+        const type = classify(ev.start - t);
+        if (type !== 'bg') segs.push({ start: t, end: ev.start, type });
       }
       segs.push({ start: ev.start, end: ev.start + ev.duration, type: ev.type });
       t = ev.start + ev.duration;
     }
     // Classify any trailing gap after the last event.
     if (t < workEnd) {
-      segs.push({ start: t, end: workEnd, type: classify(workEnd - t) });
+      const type = classify(workEnd - t);
+      if (type !== 'bg') segs.push({ start: t, end: workEnd, type });
     }
     return segs;
   }
@@ -1114,7 +1122,7 @@
       // 2b. Coloured timeline segments (clipped to bar).
       // All events are real visible events — no phantom gap types exist.
       p.push(`<g clip-path="url(#${clipId})">`);
-      buildTimeline(events, workStart, workEnd, focusThr).forEach(seg => {
+      buildTimeline(events, workStart, workEnd, focusThr, 10).forEach(seg => {
         const x = tx(seg.start);
         const w = Math.max(1.5, tx(seg.end) - x);  // min 1.5px so tiny events remain visible
         const tip = TIP[seg.type] || '';
