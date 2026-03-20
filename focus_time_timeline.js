@@ -1150,7 +1150,7 @@
       // getFragmentedBlocks correctly finds the surrounding smaller gaps.
       const focusBlocks = getFocusBlocks(events, workStart, workEnd, focusThr);
 
-      const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 1);
+      const fragBlocks = getFragmentedBlocks(events, workStart, workEnd, focusThr, 2);
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
