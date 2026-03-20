@@ -1160,7 +1160,12 @@
         focusBlocks = hasFocus ? [{ start: focusStart, end: focusEnd }] : [];
         fragBlocks  = getFragmentedBlocks(events, workStart, workEnd, focusThr, 2);
       } else {
-        const shapeEvents = events.filter(e => e.type !== 'fragmented');
+        // In toggle mode, exclude both boundary phantoms AND disabled event types.
+        // This lets getFocusBlocks/getFragmentedBlocks see the hypothetical schedule
+        // with those interruption types removed — e.g. toggle all off → whole day focus.
+        const shapeEvents = events.filter(
+          e => e.type !== 'fragmented' && !this._disabledTypes.has(e.type)
+        );
         focusBlocks = getFocusBlocks(shapeEvents, workStart, workEnd, focusThr);
         fragBlocks  = getFragmentedBlocks(shapeEvents, workStart, workEnd, focusThr, 2);
       }
