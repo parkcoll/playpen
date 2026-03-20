@@ -750,7 +750,8 @@
   </div>
   <div class="ftl-stats" id="ftl-stats"></div>
   <div class="ftl-legend">
-    <div class="ftl-li"><div class="ftl-sw" style="background:#3B82F6"></div><span>Focus Time</span></div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:rgba(59,130,246,0.35)"></div><span>Focus Time</span></div>
+    <div class="ftl-li"><div class="ftl-sw" style="background:rgba(239,68,68,0.35)"></div><span>Fragmented Time</span></div>
     <div class="ftl-li ftl-toggle" data-type="email"><div class="ftl-sw" style="background:#10B981"></div><span>Email</span></div>
     <div class="ftl-li ftl-toggle" data-type="chat"><div class="ftl-sw" style="background:#F59E0B"></div><span>Chat</span></div>
     <div class="ftl-li ftl-toggle" data-type="meeting"><div class="ftl-sw" style="background:#EF4444"></div><span>Meetings</span></div>
@@ -1152,7 +1153,7 @@
 
       // Fragmented arches use the same phantom-free filtered events so arches only
       // appear over interruptions that are actually visible in the bar.
-      const fragBlocks = getFragmentedBlocks(shapeEvents, workStart, workEnd, focusThr, 15);
+      const fragBlocks = getFragmentedBlocks(shapeEvents, workStart, workEnd, focusThr, 10);
 
       const allShapes = [
         ...focusBlocks.map(b => ({ ...b, kind: 'focus' })),
@@ -1227,13 +1228,16 @@
           e => e.type === 'meeting' || e.type === 'email' || e.type === 'chat'
         ).length;
 
-        // Use the measured Worklytics values when available — the simulated
-        // gaps may be wider than measured because meetings don't fill every
-        // minute outside the focus zone.
-        const focusMin = focusHoursDaily != null
-          ? Math.round(focusHoursDaily      * 60)
+        // When event types are toggled off, compute focus/frag time from the
+        // detected blocks so the stats reflect the visible bar and users can
+        // see the hypothetical gain from removing meetings/email/chat.
+        // When nothing is toggled, prefer the raw Worklytics metric values
+        // (more accurate than the simulated gap widths).
+        const anyDisabled = this._disabledTypes && this._disabledTypes.size > 0;
+        const focusMin = (!anyDisabled && focusHoursDaily != null)
+          ? Math.round(focusHoursDaily * 60)
           : focusBlocks.reduce((s, b) => s + (b.end - b.start), 0);
-        const fragMin  = fragmentedHoursDaily != null
+        const fragMin  = (!anyDisabled && fragmentedHoursDaily != null)
           ? Math.round(fragmentedHoursDaily * 60)
           : fragBlocks.reduce( (s, b) => s + (b.end - b.start), 0);
 
